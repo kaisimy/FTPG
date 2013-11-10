@@ -10,6 +10,8 @@ Todo list
 - front side extended passive mode
 - TLS/SSL (FTPS)
 - Reusable data channels (i.e. BLOCK transfer mode)
-
+- Correct handling of subsequent commands when a channel drops prematurely
+- Events/logging
+- XML configuration file
 
 Run: Just run as any Java program
