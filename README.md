@@ -6,8 +6,7 @@ FTPG features
 - Password passthrough
 
 Todo list
-- front side active mode
-- front side extended passive mode
+- front side extended passive/active mode
 - TLS/SSL (FTPS)
 - Reusable data channels (i.e. BLOCK transfer mode)
 - Correct handling of subsequent commands when a channel drops prematurely
