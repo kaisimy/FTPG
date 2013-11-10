@@ -1,3 +1,7 @@
+/**
+ * FTPG
+ * @author Petter Nordlander
+ */
 package com.libzter.ftpg;
 import java.io.IOException;
 import java.net.ServerSocket;

@@ -1,3 +1,7 @@
+/**
+ * FTPG 
+ * @author Petter Nordlander
+ */
 package com.libzter.ftpg;
 import java.io.IOException;
 import java.io.InputStream;
@@ -70,11 +74,13 @@ public class FTPGSession implements Runnable{
 				openPassiveDC();
 				//String resp = readServer(); // 150 <text>  -- Data channel Sok.
 				//sendClient(resp+"\r\n"); // Just pass on. TODO: check that it is actually 150 and no error..
-			
-			}else if(cmd.startsWith("LIST") ||
-					cmd.startsWith("NLIST") || 
-					cmd.startsWith("RETR ") || 
-					cmd.startsWith("MLSD")){
+			}else if( cmd.regionMatches(true, 0, "PORT", 0, 4)){
+				openActiveDC(cmd);
+			}else if(cmd.regionMatches(true, 0, "LIST", 0, 4) ||
+					cmd.regionMatches(true, 0, "NLIST",0,4) || 
+					cmd.regionMatches(true, 0, "RETR ",0,4) || 
+					cmd.regionMatches(true, 0, "MLSD",0,4) || // RFC3659 extension
+					cmd.regionMatches(true, 0, "MLST",0,4)){ // RFC3659 extension
 				// Server to Client transfer
 				sendServer(cmd);
 				String resp = readServer(); // 150 <text>  -- Data channel ok.
@@ -83,7 +89,7 @@ public class FTPGSession implements Runnable{
 				resp = readServer(); // should be 226 Transfer OK TODO: take action on other codes
 				sendClient(resp+"\r\n");
 			}else if(cmd.startsWith("STOR")||
-					 cmd.startsWith("STORU")){
+					 cmd.startsWith("STOU")){
 				// Server to Client transfer
 				sendServer(cmd);
 				String resp = readServer(); // 150 <text>  -- Data channel ok.
@@ -119,9 +125,15 @@ public class FTPGSession implements Runnable{
 	
 	private void openActiveDC(String connStr) throws IOException{
 		// Find out PORT
+		String[] connDetails = connStr.substring(5).split(",");
+		int portHigh = Integer.parseInt(connDetails[4]);
+		int portLow = Integer.parseInt(connDetails[5]);
+		int port = portHigh*256 + portLow;
+		String host = connDetails[0] + "." + connDetails[1] + "." + connDetails[2] + "." + connDetails[3];
 		
-		
-		clientPassiveDataSocket = new Socket();
+		clientPassiveDataSocket = new Socket(host,port);
+		System.out.println("Connected to Client data channel");
+		sendClient(200, "Port command successful");
 		
 		openServerPassiveDC();
 	}
