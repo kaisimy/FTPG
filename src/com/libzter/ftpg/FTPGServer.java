@@ -21,7 +21,7 @@ public class FTPGServer {
 		while(running){
 			try{
 				Socket socket = serverSocket.accept();
-				FTPGSession session = new FTPGSession(socket);
+				FTPGSession session = new FTPGSession(socket,this);
 				sessions.put(socket, session);
 				(new Thread(session)).start();
 			}catch(IOException e){
@@ -42,5 +42,13 @@ public class FTPGServer {
 
 	public HashMap<Socket,FTPGSession> getSessions() {
 		return sessions;
+	}
+	
+	public synchronized void transferComplete(FTPGTransferEvent te){
+		System.out.println( (te.upload?"Uploaded: " : "Downloaded: ") + te.filename + "(" + te.filesize + "bytes" + ") by " + te.clientUser + "@" + te.clientIP + " at " + te.serverUser + "@" + te.serverHost);
+	}
+	
+	public synchronized void loginComplete(FTPGLoginEvent le){
+		System.out.println( (le.success?"Successful login ":"Failed login ") + le.clientUser + "@" + le.clientIP + " at " + le.serverUser + "@" + le.serverHost);
 	}
 }

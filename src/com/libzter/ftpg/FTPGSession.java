@@ -27,9 +27,13 @@ public class FTPGSession implements Runnable{
 	private String clientPassword;
 	private String clientIP;
 	
+	private FTPGServer server;
+	private FTPGTarget target;
 	
-	public FTPGSession(Socket socket){
+	
+	public FTPGSession(Socket socket,FTPGServer server){
 		this.socket = socket;
+		this.server = server;
 	}
 		
 	@Override
@@ -85,7 +89,11 @@ public class FTPGSession implements Runnable{
 				sendServer(cmd);
 				String resp = readServer(); // 150 <text>  -- Data channel ok.
 				sendClient(resp+"\r\n"); // Just pass on. TODO: check that it is actually 150 and no error..
-				copyData(serverPassiveDataSocket,clientPassiveDataSocket);
+				int bytesTransfered = copyData(serverPassiveDataSocket,clientPassiveDataSocket);
+				if( cmd.regionMatches(true, 0, "RETR", 0,4) ){
+					// Just notify server that a transfer is complete, for audit/log purposes
+					server.transferComplete(new FTPGTransferEvent(clientIP, clientUsername, target.getUsername(), target.getHost()+":"+target.getPort(),cmd.substring(5),bytesTransfered,false));
+				}
 				resp = readServer(); // should be 226 Transfer OK TODO: take action on other codes
 				sendClient(resp+"\r\n");
 			}else if(cmd.startsWith("STOR")||
@@ -94,7 +102,8 @@ public class FTPGSession implements Runnable{
 				sendServer(cmd);
 				String resp = readServer(); // 150 <text>  -- Data channel ok.
 				sendClient(resp+"\r\n"); // Just pass on. TODO: check that it is actually 150 and no error..
-				copyData(clientPassiveDataSocket,serverPassiveDataSocket);
+				int bytesTransfered = copyData(clientPassiveDataSocket,serverPassiveDataSocket);
+				server.transferComplete(new FTPGTransferEvent(clientIP,clientUsername,target.getUsername(), target.getHost()+":"+target.getPort(), cmd.substring(5),bytesTransfered,true));
 				resp = readServer(); // should be 226 Transfer OK TODO: take action on other codes
 				sendClient(resp+"\r\n");
 			}else{
@@ -108,18 +117,18 @@ public class FTPGSession implements Runnable{
 	private void openPassiveDC() throws IOException {
 		ServerSocket clientPassiveDataServerSocket = new ServerSocket(0);
 		int localPort = clientPassiveDataServerSocket.getLocalPort();
-		String localAddress = clientPassiveDataServerSocket.getLocalSocketAddress().toString();
-		System.out.println("Passive channel listening on " + localAddress + " port " + localPort);
+	//	String localAddress = clientPassiveDataServerSocket.getLocalSocketAddress().toString();
+	//	System.out.println("Passive channel listening on " + localAddress + " port " + localPort);
 		
 		// waiting for connecting client.
-		System.out.println("Waiting for client to connect to socket (60s)");
+		//System.out.println("Waiting for client to connect to socket (60s)");
 		// TODO: Use real address of interface!!!
 		int clientPortHigh = localPort  / 256;
 		int clientPortLow = localPort - (clientPortHigh*256);
 		sendClient(227,"Entering Passive Mode (127,0,0,1,"+clientPortHigh+","+clientPortLow+")");
 		clientPassiveDataServerSocket.setSoTimeout(60000);
 		clientPassiveDataSocket = clientPassiveDataServerSocket.accept();//TODO Actually catch Timeout exception and handle that according to specs.
-		System.out.println("Client connected on data channel from " + clientPassiveDataSocket.getLocalAddress() + " : " + clientPassiveDataSocket.getLocalPort());
+		//System.out.println("Client connected on data channel from " + clientPassiveDataSocket.getLocalAddress() + " : " + clientPassiveDataSocket.getLocalPort());
 		openServerPassiveDC();
 	}
 	
@@ -132,7 +141,7 @@ public class FTPGSession implements Runnable{
 		String host = connDetails[0] + "." + connDetails[1] + "." + connDetails[2] + "." + connDetails[3];
 		
 		clientPassiveDataSocket = new Socket(host,port);
-		System.out.println("Connected to Client data channel");
+		//System.out.println("Connected to Client data channel");
 		sendClient(200, "Port command successful");
 		
 		openServerPassiveDC();
@@ -154,7 +163,7 @@ public class FTPGSession implements Runnable{
 		String serverHost = connDetails[0].substring(1) + "." + connDetails[1] + "." + connDetails[2] + "." + connDetails[3];
 		int port = Integer.parseInt(connDetails[4]) * 256 + Integer.parseInt(connDetails[5].substring(0, connDetails[5].length()-1));
 		serverPassiveDataSocket = new Socket(serverHost,port);
-		System.out.println("Connected to Server data channel on " + serverPassiveDataSocket.getLocalAddress().toString() + " : " + serverPassiveDataSocket.getLocalPort());
+	//	System.out.println("Connected to Server data channel on " + serverPassiveDataSocket.getLocalAddress().toString() + " : " + serverPassiveDataSocket.getLocalPort());
 	}
 
 	private void showWelcome(){
@@ -163,7 +172,6 @@ public class FTPGSession implements Runnable{
 
 	private void loginSequence() throws IOException, InterruptedException {
 		String line = "";
-		//sendClient(FTPGConstants.SERVICE_READY_CODE,FTPGConstants.SERVICE_READY_TEXT);
 		line = readClient();
 		while( !line.startsWith("USER ") || line.length() < 6){
 			sendClient(530,"Please login with USER and PASS first");
@@ -189,10 +197,10 @@ public class FTPGSession implements Runnable{
 		// Look up target server and target username
 		clientIP = socket.getInetAddress().toString();
 		clientIP = clientIP.substring(clientIP.indexOf('/'));
-		FTPGTarget target = lookup(clientUsername, clientIP);
+		target = lookup(clientUsername, clientIP);
 		
 		// Connect to server	
-		System.out.println("Connecting to backend server " + target.getUsername() + "@" + target.getHost() + ":" + target.getPort());
+	//	System.out.println("Connecting to backend server " + target.getUsername() + "@" + target.getHost() + ":" + target.getPort());
 		try {
 			serverSocket = new Socket(target.getHost(),target.getPort());
 			inServer = new Scanner(serverSocket.getInputStream());
@@ -217,23 +225,25 @@ public class FTPGSession implements Runnable{
 		// Just pass to client
 		sendClient(line+"\r\n");
 		if( !line.startsWith("230 ")){
+			server.loginComplete(new FTPGLoginEvent(clientIP,clientUsername,target.getUsername(),target.getHost()+":"+target.getPort(),false));
 			throw new RuntimeException("Login failed. terminating this thread.");
 		}
+		
+		server.loginComplete(new FTPGLoginEvent(clientIP,clientUsername,target.getUsername(),target.getHost()+":"+target.getPort(),true));
 		// TODO: if wrong password - we should terminate session, or retry the password phase.
 	}
 	
 	// Any data copy function between Sockets
-	private void copyData(Socket sender, Socket receiver) throws IOException{
+	private int copyData(Socket sender, Socket receiver) throws IOException{
 		int bytesRead = 0;
-		
+		int totalBytes = 0;
 		try {
 			InputStream is = sender.getInputStream();
 			OutputStream os = receiver.getOutputStream();		
 			do{ 
 				byte[] bytes = new byte[256];
 				bytesRead = is.read(bytes);
-		//	
-				System.out.println("DATA>>>" + (bytesRead > 0 ? new String(bytes) : "EOF"));
+				totalBytes += bytesRead;
 				if( bytesRead > 0){ // bytesRead = -1 means EOF
 					os.write(bytes, 0, bytesRead);
 				}
@@ -250,6 +260,7 @@ public class FTPGSession implements Runnable{
 				receiver.close();
 			}
 		}
+		return totalBytes;
 	}
 
 	private FTPGTarget lookup(String clientUsername, String clientIP) {
@@ -263,7 +274,7 @@ public class FTPGSession implements Runnable{
 	
 	private void sendClient(String text){
 		outClient.printf(text);
-		System.out.println("To Client: " + text);
+		//System.out.println("To Client: " + text);
 	}
 	
 	private String readClient() throws InterruptedException{
@@ -272,7 +283,7 @@ public class FTPGSession implements Runnable{
 			Thread.sleep(50L);
 		}
 		String data =  inClient.nextLine();
-		System.out.println("From Client: " + data);
+		//System.out.println("From Client: " + data);
 		return data;
 	}
 	
@@ -287,12 +298,12 @@ public class FTPGSession implements Runnable{
 				data += next + "\r\n";
 			}while( !next.substring(0,4).equals(code+" "));
 		}
-		System.out.println("From Server: " + data);
+		//System.out.println("From Server: " + data);
 		return data;
 	}
 	
 	private void sendServer(String text){
-		System.out.println("To Server: " + text);
+		//System.out.println("To Server: " + text);
 		outServer.printf(text + "\r\n");
 	}
 	

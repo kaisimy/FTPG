@@ -6,6 +6,8 @@ FTPG features
 - Password passthrough
 
 Todo list
+- Only uses local interface for passive mode - fix
+- Configurable interface for inbound/outbound traffic
 - front side extended passive/active mode
 - TLS/SSL (FTPS)
 - Reusable data channels (i.e. BLOCK transfer mode)
