@@ -1,3 +1,7 @@
+/**
+ * FTPG 
+ * @author Petter Nordlander
+ */
 package com.libzter.ftpg;
 
 // Event for logging

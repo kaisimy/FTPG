@@ -10,6 +10,7 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.List;
 import java.util.Scanner;
 
 
@@ -196,8 +197,13 @@ public class FTPGSession implements Runnable{
 		
 		// Look up target server and target username
 		clientIP = socket.getInetAddress().toString();
-		clientIP = clientIP.substring(clientIP.indexOf('/'));
+		clientIP = clientIP.substring(clientIP.indexOf('/')+1);
 		target = lookup(clientUsername, clientIP);
+		if( target == null){
+			sendClient(421,"Service not available, closing control connection.");
+			server.loginComplete(new FTPGLoginEvent(clientIP,clientUsername,"N/A","N/A",false));
+			throw new RuntimeException("No valid route found for user");
+		}
 		
 		// Connect to server	
 	//	System.out.println("Connecting to backend server " + target.getUsername() + "@" + target.getHost() + ":" + target.getPort());
@@ -263,9 +269,38 @@ public class FTPGSession implements Runnable{
 		return totalBytes;
 	}
 
-	private FTPGTarget lookup(String clientUsername, String clientIP) {
-		// TODO Lookup in XML routing file
-		return new FTPGTarget("127.0.0.1","nisse",21);
+	private FTPGTarget lookup(String clientUsername, String clientIP) throws IOException {
+		List<FTPGRoute> routes = server.getConfig().getRoutes();
+		for(FTPGRoute r : routes){
+			if( inRange(clientIP,r.getClientIP()) && clientUsername.equalsIgnoreCase(r.getClientUser())){
+				String[] hostParts = r.getServerHost().split(":");
+				int port = 21;
+				if( hostParts.length == 2){
+					port = Integer.parseInt(hostParts[1]);
+				}
+				return new FTPGTarget(hostParts[0],r.getServerUser(),port);
+			}
+		}
+		return null;
+	}
+	
+	private boolean inRange(String ipStr, String cidr){
+		
+		int ip = ipStrToInt(ipStr);
+		
+		String[] cidrParts = cidr.split("/");
+		int netBits = 0;
+		if( cidrParts.length == 2 ){
+			netBits = Integer.parseInt(cidrParts[1]);
+		}
+		int net = ipStrToInt(cidrParts[0]);
+		int mask = 0xffffffff << (32 - netBits);
+		return  (ip & mask) == net;
+	}
+	
+	private int ipStrToInt(String ip){
+		String[] d = ip.split("\\.");
+		return Integer.parseInt(d[0]) * 256*256*256 + Integer.parseInt(d[1]) * 256*256 + Integer.parseInt(d[2]) * 256 + Integer.parseInt(d[3]);
 	}
 
 	private void sendClient(int code, String text){

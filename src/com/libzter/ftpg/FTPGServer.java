@@ -12,7 +12,12 @@ public class FTPGServer {
 
 	private boolean running = true;
 	private HashMap<Socket,FTPGSession> sessions = new HashMap<Socket,FTPGSession>();
+	private FTPGConfig config;
 	
+	public FTPGServer(String configLocation, long cacheTime) {
+		config = new FTPGConfig(configLocation,cacheTime);
+	}
+
 	public void start(int port) throws IOException{
 		ServerSocket serverSocket = new ServerSocket(port);
 		
@@ -42,6 +47,10 @@ public class FTPGServer {
 
 	public HashMap<Socket,FTPGSession> getSessions() {
 		return sessions;
+	}
+	
+	public FTPGConfig getConfig(){
+		return config;
 	}
 	
 	public synchronized void transferComplete(FTPGTransferEvent te){
