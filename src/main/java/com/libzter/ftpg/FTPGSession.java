@@ -19,7 +19,7 @@ import java.util.logging.Logger;
 public class FTPGSession implements Runnable{
 	
 	private final static Logger logger = Logger.getLogger(FTPGSession.class.getName()); 
-
+	private ServerSocket clientPassiveDataServerSocket = null; 
 	private Socket socket;
 	private Socket serverSocket;
 	private PrintWriter outClient,outServer;
@@ -118,7 +118,11 @@ public class FTPGSession implements Runnable{
 	}
 
 	private void openPassiveDC() throws IOException {
-		ServerSocket clientPassiveDataServerSocket = new ServerSocket(0);
+		// Only allow one server socket accepting new passive data connections per session to avoid resource leak
+		if( clientPassiveDataServerSocket != null && !clientPassiveDataServerSocket.isClosed()){
+			clientPassiveDataServerSocket.close();
+		}
+		clientPassiveDataServerSocket = new ServerSocket(0);
 		int localPort = clientPassiveDataServerSocket.getLocalPort();
 		String localAddress = clientPassiveDataServerSocket.getLocalSocketAddress().toString();
 		logger.fine("Passive channel listening on " + localAddress + " port " + localPort);
@@ -244,9 +248,11 @@ public class FTPGSession implements Runnable{
 	private int copyData(Socket sender, Socket receiver) throws IOException{
 		int bytesRead = 0;
 		int totalBytes = 0;
+		InputStream is = null;
+		OutputStream os = null;
 		try {
-			InputStream is = sender.getInputStream();
-			OutputStream os = receiver.getOutputStream();		
+			is = sender.getInputStream();
+			os = receiver.getOutputStream();		
 			do{ 
 				byte[] bytes = new byte[256];
 				bytesRead = is.read(bytes);
@@ -257,8 +263,11 @@ public class FTPGSession implements Runnable{
 			}while(bytesRead >0);
 		} catch (IOException e) {
 			// Does not really matter, just close connections when done
+			// TODO not sure if it's reasonable to log a warning here?
 		}finally{
 		
+			// TODO: Close both input and output streams to flush potential data
+				
 			// Okay, a stream is closed. Just make sure we do close the other one.
 			if( !sender.isClosed()) {
 				sender.close();
