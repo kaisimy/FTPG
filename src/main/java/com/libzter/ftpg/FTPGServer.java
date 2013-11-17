@@ -32,8 +32,17 @@ public class FTPGServer {
 			}catch(IOException e){
 				System.out.println("Accept failed");
 				e.printStackTrace();
-				System.exit(-1);
+				try{ // Clean up server socket.
+					serverSocket.close();
+				}catch(Exception ex){
+					ex.printStackTrace();
+				}
+				return;
 			}
+		}
+		if( !serverSocket.isClosed()){
+			try{ serverSocket.close(); serverSocket = null;}
+			catch(Exception e){ e.printStackTrace();}
 		}
 	}
 

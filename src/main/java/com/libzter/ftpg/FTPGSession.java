@@ -37,7 +37,6 @@ public class FTPGSession implements Runnable{
 		this.server = server;
 	}
 		
-	@Override
 	public void run() {
 		System.out.println("Session initialised");
 		try {
@@ -130,6 +129,7 @@ public class FTPGSession implements Runnable{
 		clientPassiveDataServerSocket.setSoTimeout(60000);
 		clientPassiveDataSocket = clientPassiveDataServerSocket.accept();//TODO Actually catch Timeout exception and handle that according to specs.
 		//System.out.println("Client connected on data channel from " + clientPassiveDataSocket.getLocalAddress() + " : " + clientPassiveDataSocket.getLocalPort());
+		// TODO: Can we close/clean up clientPassiveDataServerSocket here or is it needed by the real socket later on?
 		openServerPassiveDC();
 	}
 	
