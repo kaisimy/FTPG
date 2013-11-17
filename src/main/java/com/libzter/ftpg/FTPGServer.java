@@ -7,21 +7,39 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
+import java.util.logging.ConsoleHandler;
+import java.util.logging.FileHandler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.logging.SimpleFormatter;
 
 public class FTPGServer {
-
+	private static final Logger logger = Logger.getLogger(FTPGServer.class.getName());
 	private boolean running = true;
 	private HashMap<Socket,FTPGSession> sessions = new HashMap<Socket,FTPGSession>();
 	private FTPGConfig config;
 	
-	public FTPGServer(String configLocation, long cacheTime) {
+	public FTPGServer(String configLocation, long cacheTime) throws SecurityException, IOException {
+		configLogging(Level.INFO,"ftpg.log");
 		config = new FTPGConfig(configLocation,cacheTime);
 	}
 
+	private void configLogging(Level level, String filename) throws SecurityException, IOException{
+		Logger glbLogger = Logger.getLogger(Logger.GLOBAL_LOGGER_NAME);
+		glbLogger.setLevel(Level.INFO); // TODO: Make Configurable
+		
+		FileHandler fileTxt = new FileHandler(filename);
+		ConsoleHandler ch = new ConsoleHandler();
+		SimpleFormatter formatter = new SimpleFormatter();
+		fileTxt.setFormatter(formatter);
+		glbLogger.addHandler(fileTxt);
+		glbLogger.addHandler(ch);
+	}
+	
 	public void start(int port) throws IOException{
 		ServerSocket serverSocket = new ServerSocket(port);
-		
-		System.out.println("FTPG started");
+	
+		logger.info("FTPG Started");
 		
 		while(running){
 			try{
@@ -30,19 +48,21 @@ public class FTPGServer {
 				sessions.put(socket, session);
 				(new Thread(session)).start();
 			}catch(IOException e){
-				System.out.println("Accept failed");
-				e.printStackTrace();
+				logger.log(Level.SEVERE,"Accept failed",e);
+				
 				try{ // Clean up server socket.
 					serverSocket.close();
 				}catch(Exception ex){
-					ex.printStackTrace();
+					logger.log(Level.SEVERE,"",ex);
 				}
 				return;
 			}
 		}
 		if( !serverSocket.isClosed()){
 			try{ serverSocket.close(); serverSocket = null;}
-			catch(Exception e){ e.printStackTrace();}
+			catch(Exception e){ 
+				logger.log(Level.SEVERE,"",e);
+			}
 		}
 	}
 
@@ -63,10 +83,11 @@ public class FTPGServer {
 	}
 	
 	public synchronized void transferComplete(FTPGTransferEvent te){
-		System.out.println( (te.upload?"Uploaded: " : "Downloaded: ") + te.filename + "(" + te.filesize + "bytes" + ") by " + te.clientUser + "@" + te.clientIP + " at " + te.serverUser + "@" + te.serverHost);
+		logger.info( (te.upload?"Uploaded: " : "Downloaded: ") + te.filename + "(" + te.filesize + "bytes" + ") by " + te.clientUser + "@" + te.clientIP + " at " + te.serverUser + "@" + te.serverHost);
+		
 	}
 	
 	public synchronized void loginComplete(FTPGLoginEvent le){
-		System.out.println( (le.success?"Successful login ":"Failed login ") + le.clientUser + "@" + le.clientIP + " at " + le.serverUser + "@" + le.serverHost);
+		logger.info( (le.success?"Successful login ":"Failed login ") + le.clientUser + "@" + le.clientIP + " at " + le.serverUser + "@" + le.serverHost);
 	}
 }

@@ -9,8 +9,11 @@ import java.net.URL;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Scanner;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class FTPGConfig {
+	private static final Logger logger = Logger.getLogger(FTPGConfig.class.getName());
 	
 	private String location; // URL format. Could be remote
 	private long lastUpdate = 0;
@@ -51,14 +54,14 @@ public class FTPGConfig {
 				// we really need to load them at least once
 				throw e;
 			}else{
-				System.out.println("Could not load configuration. Using old config");
-				e.printStackTrace();
+				
+				logger.log(Level.WARNING,"Could not load configuration. Using old config.", e);
 			}
 		}finally{
 			try{ // Avoid resource leak and clean up Scanner
 				sc.close();
 			}catch(Exception e){
-				e.printStackTrace();
+				logger.log(Level.WARNING,"",e);
 			}
 		}
 	}
