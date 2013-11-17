@@ -4,6 +4,7 @@ FTPG features
 - Server lookup based on username and source IP.
 - Username mapping
 - Password passthrough
+- Logging
 - Cachable Config from any URL 
 
 Todo list
@@ -13,7 +14,6 @@ Todo list
 - TLS/SSL (FTPS)
 - Reusable data channels (i.e. BLOCK transfer mode)
 - Correct handling of subsequent commands when a channel drops prematurely
-- Logging to files (i.e. logback)
 
 Howto:
 
@@ -24,7 +24,7 @@ Howto:
 - Run:
   java -jar ftpg.jar <routes url> <cache timeout in ms> <port>
   i.e. java -jar ftpg.jar http://www.libzter.com/ftpg 60000 2121  
-  or java -jar ftpg.jar file://c:/routes/sample.routes 60000 2121
+  or java -jar ftpg.jar file:///c:/routes/sample.routes 60000 2121
   
 - Edit routes file:
 	a routes file contains mappings on a row basis. 
