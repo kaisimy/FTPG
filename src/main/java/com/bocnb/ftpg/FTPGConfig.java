@@ -37,11 +37,13 @@ class FTPGConfig {
 
     private void loadRoutes() throws IOException {
         Scanner scanner = null;
+        int lineNum = 0;
         try {
             URL configURL = new URL(location);
             List<FTPGRoute> routes = new LinkedList<FTPGRoute>();
             scanner = new Scanner(configURL.openStream(), "UTF-8");
             while (scanner.hasNextLine()) {
+                lineNum++;
                 String line = scanner.nextLine();
                 if (line.startsWith("#") || line.trim().equals(""))
                     continue; // Skip comments(begins with "#") and blank line
@@ -50,6 +52,8 @@ class FTPGConfig {
             }
             lastUpdate = System.currentTimeMillis();
             this.routes = routes;
+        } catch (ArrayIndexOutOfBoundsException ee) {
+            logger.log(Level.SEVERE, "Config syntax error found in line " + lineNum, ee);
         } catch (IOException e) {
             if (routes == null) {
                 // we really need to load them at least once

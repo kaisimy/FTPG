@@ -1,1 +1,4 @@
+#Client username;Client IP;Host username;Host IP[:Port]
+
+test;127.0.0.1;test;192.168.135.155
 pelle;127.0.0.1;nisse;127.0.0.1:21
