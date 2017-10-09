@@ -1,6 +1,6 @@
 /*
   FTPG 通知类(传输)
-  @author Xiao Guangting
+  @author Xiao Guangting 2017/9/27
  */
 package com.bocnb.ftpg;
 
