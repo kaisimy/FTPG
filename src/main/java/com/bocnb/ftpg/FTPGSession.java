@@ -18,8 +18,8 @@ public class FTPGSession implements Runnable {
     private ServerSocket clientPassiveDataServerSocket = null;
     private Socket clientSocket;
     private Socket hostSocket;
-    private PrintWriter outClient, outServer;
-    private Scanner inClient, inServer;
+    private PrintStream outClient, outServer;
+    private BufferedReader inClient, inServer;
 
     private Socket clientPassiveDataSocket;
     private Socket serverPassiveDataSocket;
@@ -31,6 +31,7 @@ public class FTPGSession implements Runnable {
     private FTPGServer server;
     private FTPGTarget target;
 
+    public static String CRLF = "\r\n";
     FTPGSession(Socket clientSocket, FTPGServer server) {
         this.clientSocket = clientSocket;
         this.server = server;
@@ -39,8 +40,8 @@ public class FTPGSession implements Runnable {
     public void run() {
         logger.debug("Session initialized");
         try {
-            outClient = new PrintWriter(clientSocket.getOutputStream(), true);
-            inClient = new Scanner(clientSocket.getInputStream());
+            outClient = new PrintStream(clientSocket.getOutputStream(), true);
+            inClient =new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             clientSocket.setSoTimeout(6000);
 
             try {

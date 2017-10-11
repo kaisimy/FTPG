@@ -20,8 +20,10 @@ public class FTPGServer {
     private FTPGConfig config;
 
     FTPGServer(String configLocation, long cacheTime) throws SecurityException, IOException {
+        // setup Log4J properties file
         String log4jConfPath = "log4j.properties";
         PropertyConfigurator.configure(log4jConfPath);
+        // setup
         config = new FTPGConfig(configLocation, cacheTime);
     }
 
