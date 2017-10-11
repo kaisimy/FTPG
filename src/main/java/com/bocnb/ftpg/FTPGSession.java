@@ -7,7 +7,6 @@ package com.bocnb.ftpg;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.security.cert.CRL;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -17,7 +16,6 @@ public class FTPGSession implements Runnable {
     private final static Logger logger = LoggerFactory.getLogger(FTPGSession.class);
 
     // Booleans
-    private boolean serverPassive = false;
     private boolean userLoggedIn = false;
     private boolean connectionClosed = false;
 
@@ -40,7 +38,10 @@ public class FTPGSession implements Runnable {
     private FTPGServer server;
     private FTPGTarget target;
 
-    public static String CRLF = "\r\n";
+    // Static members
+    private static String CRLF = "\r\n";
+    private static int SOCKET_TIMEOUT = 240000; // in milliseconds
+
     FTPGSession(Socket clientCtrlSocket, FTPGServer server) {
         this.clientCtrlSocket = clientCtrlSocket;
         this.server = server;
@@ -51,12 +52,12 @@ public class FTPGSession implements Runnable {
         try {
             outClient = new PrintStream(clientCtrlSocket.getOutputStream(), true);
             inClient =new BufferedReader(new InputStreamReader(clientCtrlSocket.getInputStream()));
-            clientCtrlSocket.setSoTimeout(6000);
+            clientCtrlSocket.setSoTimeout(SOCKET_TIMEOUT);
 
             try {
                 showWelcome();
                 loginSequence();
-                // commandLoop();
+                commandLoop();
             } catch (Exception re) {
                 // TODO: Treat the following error with some logic. There could be many reasons.
                 logger.error("Fatal error in FTPG session. Terminating this client", re);
@@ -73,7 +74,6 @@ public class FTPGSession implements Runnable {
         }
     }
 
-    /*
     // Main command loop
     private void commandLoop() throws IOException, InterruptedException {
         boolean running = true;
@@ -83,8 +83,6 @@ public class FTPGSession implements Runnable {
             // Special treatment of certain commands
             if (cmd.equalsIgnoreCase("PASV")) {
                 openPassiveDC();
-                //String resp = readServer(); // 150 <text>  -- Data channel Sok.
-                //sendClient(resp+"\r\n"); // Just pass on. TODO: check that it is actually 150 and no error..
             } else if (cmd.regionMatches(true, 0, "PORT", 0, 4)) {
                 openActiveDC(cmd);
             } else if (cmd.regionMatches(true, 0, "LIST", 0, 4) ||
@@ -94,54 +92,26 @@ public class FTPGSession implements Runnable {
                     cmd.regionMatches(true, 0, "MLST", 0, 4)) { // RFC3659 extension
                 // Server to Client transfer
                 sendServer(cmd);
-                String resp = readServer(); // 150 <text>  -- Data channel ok.
-                sendClient(resp + "\r\n"); // Just pass on. TODO: check that it is actually 150 and no error..
-                int bytesTransferred = copyData(serverPassiveDataSocket, clientPassiveDataSocket);
+                int bytesTransferred = copyData(serverDataSocket, clientDataSocket);
                 if (cmd.regionMatches(true, 0, "RETR", 0, 4)) {
                     // Just notify server that a transfer is complete, for audit/log purposes
                     server.transferComplete(new FTPGTransferEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), cmd.substring(5), bytesTransferred, false));
                 }
-                resp = readServer(); // should be 226 Transfer OK TODO: take action on other codes
-                sendClient(resp + "\r\n");
+                readServer(true); // should be 226 Transfer OK TODO: take action on other codes
             } else if (cmd.startsWith("STOR") ||
                     cmd.startsWith("STOU")) {
                 // Server to Client transfer
                 sendServer(cmd);
-                String resp = readServer(); // 150 <text>  -- Data channel ok.
-                sendClient(resp + "\r\n"); // Just pass on. TODO: check that it is actually 150 and no error..
-                int bytesTransferred = copyData(clientPassiveDataSocket, serverPassiveDataSocket);
+                String line = readServer(true);   // FIXME after this line connection closed
+                int bytesTransferred = copyData(clientDataSocket, serverDataSocket);
                 server.transferComplete(new FTPGTransferEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), cmd.substring(5), bytesTransferred, true));
-                resp = readServer(); // should be 226 Transfer OK TODO: take action on other codes
-                sendClient(resp + "\r\n");
+                readServer(true); // should be 226 Transfer OK TODO: take action on other codes
             } else {
                 sendServer(cmd);
-                String response = readServer();
-                sendClient(response);
+                readServer(true);
             }
         }
         // terminate session
-    }
-
-    private void openPassiveDC() throws IOException {
-        // Only allow one server clientCtrlSocket accepting new passive data connections per session to avoid resource leak
-        if (clientPassiveDataServerSocket != null && !clientPassiveDataServerSocket.isClosed()) {
-            clientPassiveDataServerSocket.close();
-        }
-        clientPassiveDataServerSocket = new ServerSocket(0);
-        int localPort = clientPassiveDataServerSocket.getLocalPort();
-        String localAddress = clientPassiveDataServerSocket.getLocalSocketAddress().toString();
-        logger.debug("Passive channel listening on " + localAddress + " port " + localPort);
-        // waiting for connecting client.
-        logger.debug("Waiting for client to connect to clientCtrlSocket (60s)");
-        // TODO: Use real address of interface!!!
-        int clientPortHigh = localPort / 256;
-        int clientPortLow = localPort - (clientPortHigh * 256);
-        sendClient(227, "Entering Passive Mode (127,0,0,1," + clientPortHigh + "," + clientPortLow + ")");
-        clientPassiveDataServerSocket.setSoTimeout(60000);
-        clientPassiveDataSocket = clientPassiveDataServerSocket.accept(); // TODO Actually catch Timeout exception and handle that according to specs.
-        logger.debug("Client connected on data channel from " + clientPassiveDataSocket.getLocalAddress() + ":" + clientPassiveDataSocket.getLocalPort());
-        // TODO: Can we close/clean up clientPassiveDataServerSocket here or is it needed by the real clientCtrlSocket later on?
-        openServerPassiveDC();
     }
 
     private void openActiveDC(String connStr) throws IOException {
@@ -152,17 +122,45 @@ public class FTPGSession implements Runnable {
         int port = portHigh * 256 + portLow;
         String host = connDetails[0] + "." + connDetails[1] + "." + connDetails[2] + "." + connDetails[3];
 
-        clientPassiveDataSocket = new Socket(host, port);
+        clientDataSocket = new Socket(host, port);
         logger.debug("Connected to Client data channel");
         sendClient(200, "Port command successful");
 
+        serverDataServerSocket = new ServerSocket(0);
+        port = serverDataServerSocket.getLocalPort();
+        String localServerIP = serverCtrlSocket.getLocalAddress().getHostAddress();
+        String toServer = "PORT " + localServerIP.replace('.' ,',') + ',' + port / 256 + ',' + (port % 256);
+        sendServer(toServer);
+        readServer(false);
+        serverDataSocket = serverDataServerSocket.accept();
+        logger.debug("Server connected on data channel from " + serverDataSocket.getLocalPort() + ":" + serverDataSocket.getLocalPort());
+    }
+
+    private void openPassiveDC() throws IOException {
+        // Only allow one clientDataServerSocket accepting new passive data connections per session to avoid resource leak
+        if (clientDataSocket != null && !clientDataServerSocket.isClosed()) {
+            clientDataServerSocket.close();
+        }
+        clientDataServerSocket = new ServerSocket(0);
+        int localPort = clientDataServerSocket.getLocalPort();
+        String localAddress = clientCtrlSocket.getLocalAddress().getHostAddress();
+        logger.debug("Passive channel listening on " + localAddress + " port " + localPort);
+        // waiting for connecting client.
+        logger.debug("Waiting for client to connect to clientCtrlSocket (240s)");
+        // TODO: Use real address of interface!!!
+        int clientPortHigh = localPort / 256;
+        int clientPortLow = localPort - (clientPortHigh * 256);
+        sendClient(227, "Entering Passive Mode (" + localAddress.replace('.', ',') + "," + clientPortHigh + "," + clientPortLow + ")");
+        clientDataSocket = clientDataServerSocket.accept(); // TODO Actually catch Timeout exception and handle that according to specs.
+        logger.debug("Client connected on data channel from " + clientDataSocket.getLocalAddress() + ":" + clientDataSocket.getLocalPort());
+        // TODO: Can we close/clean up clientDataServerSocket here or is it needed by the real clientDataSocket later on?
         openServerPassiveDC();
     }
 
     private void openServerPassiveDC() throws IOException {
         // Connect to server
         sendServer("PASV");
-        String line = readServer();
+        String line = readServer(false);
         if (!line.startsWith("227 ")) {
             throw new RuntimeException("Error establishing backside passive channel." + line);
         }
@@ -174,13 +172,12 @@ public class FTPGSession implements Runnable {
         }
         String serverHost = connDetails[0].substring(1) + "." + connDetails[1] + "." + connDetails[2] + "." + connDetails[3];
         int port = Integer.parseInt(connDetails[4]) * 256 + Integer.parseInt(connDetails[5].substring(0, connDetails[5].length() - 1));
-        serverPassiveDataSocket = new Socket(serverHost, port);
-        logger.debug("Connected to Server data channel on " + serverPassiveDataSocket.getLocalAddress().toString() + " : " + serverPassiveDataSocket.getLocalPort());
+        serverDataSocket = new Socket(serverHost, port);
+        logger.debug("Connected to Server data channel on " + serverDataSocket.getLocalAddress().toString() + " : " + serverDataSocket.getLocalPort());
     }
-    */
 
     private void showWelcome() {
-        sendClient("220-Welcome to FTPG\r\nHave a nice day\r\n220 :-)\r\n");
+        sendClient("220-Welcome to FTPG" + CRLF + "220-Have a nice day" + CRLF + "220 :-)");
     }
 
     private void loginSequence() throws IOException, InterruptedException {
@@ -200,10 +197,8 @@ public class FTPGSession implements Runnable {
             line = readClient();
         }
 
-        String password = line.substring(5);
-
         // We got ok credentials
-        clientPassword = password;
+        clientPassword = line.substring(5);
         clientUsername = username;
 
         // Look up target server and target username
@@ -228,24 +223,24 @@ public class FTPGSession implements Runnable {
             throw e;
         }
 
-        readFromServer(false);  // Hello from server, just discard
+        readServer(false);  // Hello from server, just discard
         // TODO: Make sure it's 220
 
         sendServer("USER " + target.getUsername());
-        line = readFromServer(false);
+        line = readServer(false);
         if (!line.startsWith("331 ")) {
             sendClient(500, "Error login to server");
             throw new RuntimeException("Error login to server");
         }
         sendServer("PASS " + clientPassword);
-        readFromServer(true);
+        readServer(true);
         if (!userLoggedIn) {
             server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), false));
             throw new RuntimeException("Login failed. terminating this thread.");
         }
 
         server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), true));
-        // TODO: if wrong password - we should terminate session, or retry the password phase.
+        // TODO: if password is wrong - we should terminate session, or retry the password phase.
     }
 
     // Any data copy function between Sockets
@@ -326,7 +321,7 @@ public class FTPGSession implements Runnable {
         while ((line = inClient.readLine()) == null) {
             Thread.sleep(50L);
         }
-        logger.trace("From Client: " + line);
+        logger.debug("From Client: " + line);
         return line;
     }
 
@@ -335,24 +330,7 @@ public class FTPGSession implements Runnable {
         logger.debug("To Client: " + text);
     }
 
-    /*
-    private String readServer() {
-        String first = inServer.nextLine();
-        StringBuilder data = new StringBuilder(first + "\r\n");
-        if (first.charAt(3) == '-') {
-            String code = first.substring(0, 3);
-            String next = "";
-            do {
-                next = inServer.nextLine();
-                data.append(next).append("\r\n");
-            } while (!next.substring(0, 4).equals(code + " "));
-        }
-        logger.trace("From Server: " + data);
-        return data.toString();
-    }
-    */
-
-    private String readFromServer(boolean forwardToClient) throws IOException {
+    private String readServer(boolean forwardToClient) throws IOException {
         String fromServer = inServer.readLine();
         String firstLine = fromServer;
 
@@ -361,8 +339,7 @@ public class FTPGSession implements Runnable {
             String multiLine = fromServer.substring(0, 3) + ' ';
             while (!fromServer.startsWith(multiLine)) {
                 if (forwardToClient) {
-                    outClient.print(fromServer + CRLF);
-                    outClient.flush();
+                    sendClient(fromServer);
                 }
                 logger.debug("From server: " + fromServer);
 
@@ -384,12 +361,11 @@ public class FTPGSession implements Runnable {
 
         if (forwardToClient || response == 110) {   // 110 Restart marker reply
             outClient.print(fromServer + CRLF);
-            outClient.flush();
         }
         logger.debug("From server: " + fromServer);
 
         if (response >= 100 && response <= 199) {
-            firstLine = readFromServer(true);
+            firstLine = readServer(true);
         }
 
         return firstLine;
@@ -397,15 +373,11 @@ public class FTPGSession implements Runnable {
 
     private void sendServer(String text) {
         logger.debug("To Server: " + text);
-        outServer.printf(text + "\r\n");
+        outServer.print(text + CRLF);
     }
 
-    public Socket getClientCtrlSocket() {
+    Socket getClientCtrlSocket() {
         return clientCtrlSocket;
-    }
-
-    public void setClientCtrlSocket(Socket socket) {
-        this.clientCtrlSocket = socket;
     }
 
 }

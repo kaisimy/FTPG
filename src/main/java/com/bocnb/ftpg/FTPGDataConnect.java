@@ -11,6 +11,7 @@ import java.net.Socket;
 import java.net.SocketException;
 
 public class FTPGDataConnect extends Thread {
+    private FTPGSession session;
     private final static Logger logger = LoggerFactory.getLogger(FTPGDataConnect.class);
     private final static int DATA_BUFFER_SIZE = 512;
 
@@ -18,19 +19,18 @@ public class FTPGDataConnect extends Thread {
     private final Socket[] sockets = new Socket[2];
     private boolean isInitialized;
     private final Object[] o;
-    private boolean validDataConnection;
 
-    private Object mutex = new Object();
+    private final Object mutex = new Object();
 
     // Each argument may be either a Socket or a ServerSocket.
-    public FTPGDataConnect(Object o1, Object o2) {
+    public FTPGDataConnect(Object o1, Object o2, FTPGSession session) {
         this.o = new Object[]{o1, o2};
+        this.session = session;
     }
 
     public void run() {
         BufferedInputStream bis = null;
         BufferedOutputStream bos = null;
-        validDataConnection = false;
 
         try {
             // n = 0 - Thread Copy socket 0 to socket 1
@@ -41,34 +41,18 @@ public class FTPGDataConnect extends Thread {
                     if (o[i] instanceof ServerSocket) {
                         ServerSocket ss = (ServerSocket) o[i];
                         sockets[i] = ss.accept();
-                        /*
-                        if (ss == ssDataServer && !config.serverOneBindPort ||
-                                ss == ssDataClient && !config.clientOneBindPort) {
-
-                            ss.close();
-                        }
-                        */
                     } else {
                         sockets[i] = (Socket) o[i];
                     }
-                    // Check to see if DataConnection is from same IP address
-                    // as the ControlConnection.
-                    /*
-                    if (skControlClient.getInetAddress().getHostAddress().
-                            compareTo(sockets[i].getInetAddress().getHostAddress()) == 0) {
 
-                        validDataConnection = true;
+                    // Check to see if data connection is from same IP address
+                    // as the control connection.
+                    if (this.session.getClientCtrlSocket().getInetAddress().getHostAddress().
+                            compareTo(sockets[i].getInetAddress().getHostAddress()) != 0) {
+                        throw new SocketException("Invalid DataConnection - not from Control Client");
                     }
-                    */
                 }
-                // Check to see if Data InetAddress == Control InetAddress, otherwise
-                // somebody else opened a connection!  Close all the connections.
-                /*
-                if (config.validateDataConnection && !validDataConnection) {
-                    pwDebug.println("Invalid DataConnection - not from Control Client");
-                    throw new SocketException("Invalid DataConnection - not from Control Client");
-                }
-                */
+
                 isInitialized = true;
 
                 // In some cases thread socket[0] -> socket[1] thread can
@@ -91,11 +75,9 @@ public class FTPGDataConnect extends Thread {
                 mutex.notify();
             }
 
-            for (; ; ) {
-                for (int i; (i = bis.read(buffer, 0, DATA_BUFFER_SIZE)) != -1; ) {
-                    bos.write(buffer, 0, i);
-                }
-                break;
+            int i;
+            while ((i = bis.read(buffer, 0, DATA_BUFFER_SIZE)) != -1) {
+                bos.write(buffer, 0, i);
             }
             bos.flush();
         } catch (SocketException e) {
@@ -110,10 +92,12 @@ public class FTPGDataConnect extends Thread {
         try {
             sockets[0].close();
         } catch (Exception e) {
+            // TODO make sure socket closed
         }
         try {
             sockets[1].close();
         } catch (Exception e) {
+            // TODO make sure socket closed
         }
     }
 }
