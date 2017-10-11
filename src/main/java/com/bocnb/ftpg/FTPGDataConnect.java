@@ -53,19 +53,22 @@ public class FTPGDataConnect extends Thread {
                     }
                     // Check to see if DataConnection is from same IP address
                     // as the ControlConnection.
+                    /*
                     if (skControlClient.getInetAddress().getHostAddress().
                             compareTo(sockets[i].getInetAddress().getHostAddress()) == 0) {
 
                         validDataConnection = true;
                     }
+                    */
                 }
                 // Check to see if Data InetAddress == Control InetAddress, otherwise
                 // somebody else opened a connection!  Close all the connections.
+                /*
                 if (config.validateDataConnection && !validDataConnection) {
                     pwDebug.println("Invalid DataConnection - not from Control Client");
                     throw new SocketException("Invalid DataConnection - not from Control Client");
                 }
-
+                */
                 isInitialized = true;
 
                 // In some cases thread socket[0] -> socket[1] thread can
