@@ -11,7 +11,6 @@ import java.net.Socket;
 import java.net.SocketException;
 
 public class FTPGDataConnect extends Thread {
-    private FTPGSession session;
     private final static Logger logger = LoggerFactory.getLogger(FTPGDataConnect.class);
     private final static int DATA_BUFFER_SIZE = 512;
 
@@ -23,9 +22,8 @@ public class FTPGDataConnect extends Thread {
     private final Object mutex = new Object();
 
     // Each argument may be either a Socket or a ServerSocket.
-    public FTPGDataConnect(Object o1, Object o2, FTPGSession session) {
+    public FTPGDataConnect(Object o1, Object o2) {
         this.o = new Object[]{o1, o2};
-        this.session = session;
     }
 
     public void run() {
@@ -43,13 +41,6 @@ public class FTPGDataConnect extends Thread {
                         sockets[i] = ss.accept();
                     } else {
                         sockets[i] = (Socket) o[i];
-                    }
-
-                    // Check to see if data connection is from same IP address
-                    // as the control connection.
-                    if (this.session.getClientCtrlSocket().getInetAddress().getHostAddress().
-                            compareTo(sockets[i].getInetAddress().getHostAddress()) != 0) {
-                        throw new SocketException("Invalid DataConnection - not from Control Client");
                     }
                 }
 

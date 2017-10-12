@@ -5,9 +5,13 @@
 package com.bocnb.ftpg;
 
 import java.io.*;
+import java.net.BindException;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +22,8 @@ public class FTPGSession implements Runnable {
     // Booleans
     private boolean userLoggedIn = false;
     private boolean connectionClosed = false;
+    private boolean running;
+    private boolean serverPassive;
 
     // Control sockets & io
     private Socket clientCtrlSocket;
@@ -37,13 +43,22 @@ public class FTPGSession implements Runnable {
     // Others
     private FTPGServer server;
     private FTPGTarget target;
+    private FTPGDataConnect dataConnect;
+    String sLocalClientIP;
+    String sLocalServerIP;
 
     // Static members
     private static String CRLF = "\r\n";
-    private static int SOCKET_TIMEOUT = 240000; // in milliseconds
+    private static int SOCKET_TIMEOUT = 60000; // in milliseconds
+    private static int[] portRanges; // for passive connection
+    private final static int lowPort = 50000;
+    private final static int highPort = 50100;
+    private final static Map lastPorts = new HashMap();
 
     FTPGSession(Socket clientCtrlSocket, FTPGServer server) {
         this.clientCtrlSocket = clientCtrlSocket;
+        this.sLocalClientIP = clientCtrlSocket.getLocalAddress().getHostAddress().replace('.', ',');
+        portRanges = getPortRanges();
         this.server = server;
     }
 
@@ -51,13 +66,21 @@ public class FTPGSession implements Runnable {
         logger.debug("Session initialized");
         try {
             outClient = new PrintStream(clientCtrlSocket.getOutputStream(), true);
-            inClient =new BufferedReader(new InputStreamReader(clientCtrlSocket.getInputStream()));
-            clientCtrlSocket.setSoTimeout(SOCKET_TIMEOUT);
+            inClient = new BufferedReader(new InputStreamReader(clientCtrlSocket.getInputStream()));
+            // clientCtrlSocket.setSoTimeout(SOCKET_TIMEOUT);
 
             try {
                 showWelcome();
                 loginSequence();
-                commandLoop();
+                running = true;
+                while (true) {
+                    String s = inClient.readLine();
+                    if (s == null) {
+                        running = false;
+                        break;
+                    }
+                    readCommand(s);
+                }
             } catch (Exception re) {
                 // TODO: Treat the following error with some logic. There could be many reasons.
                 logger.error("Fatal error in FTPG session. Terminating this client", re);
@@ -74,106 +97,182 @@ public class FTPGSession implements Runnable {
         }
     }
 
-    // Main command loop
-    private void commandLoop() throws IOException, InterruptedException {
-        boolean running = true;
-        while (running) {
-            // Read command from client
-            String cmd = readClient();
-            // Special treatment of certain commands
-            if (cmd.equalsIgnoreCase("PASV")) {
-                openPassiveDC();
-            } else if (cmd.regionMatches(true, 0, "PORT", 0, 4)) {
-                openActiveDC(cmd);
-            } else if (cmd.regionMatches(true, 0, "LIST", 0, 4) ||
-                    cmd.regionMatches(true, 0, "NLIST", 0, 4) ||
-                    cmd.regionMatches(true, 0, "RETR ", 0, 4) ||
-                    cmd.regionMatches(true, 0, "MLSD", 0, 4) || // RFC3659 extension
-                    cmd.regionMatches(true, 0, "MLST", 0, 4)) { // RFC3659 extension
-                // Server to Client transfer
-                sendServer(cmd);
-                int bytesTransferred = copyData(serverDataSocket, clientDataSocket);
-                if (cmd.regionMatches(true, 0, "RETR", 0, 4)) {
-                    // Just notify server that a transfer is complete, for audit/log purposes
-                    server.transferComplete(new FTPGTransferEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), cmd.substring(5), bytesTransferred, false));
+    private void readCommand(String fromClient) throws IOException {
+        String cmd = fromClient;
+        if (!userLoggedIn && (cmd.startsWith("PASV") || cmd.startsWith("PORT"))) {
+            sendClient(530, "Not logged in.");
+            return;
+        }
+
+        if (cmd.startsWith("PASV") || cmd.startsWith("EPSV")) {
+            serverPassive = true;
+            if (clientDataServerSocket != null) {
+                try {
+                    clientDataServerSocket.close();
+                } catch (IOException ioe) {
+                    // Nothing to do here
                 }
-                readServer(true); // should be 226 Transfer OK TODO: take action on other codes
-            } else if (cmd.startsWith("STOR") ||
-                    cmd.startsWith("STOU")) {
-                // Server to Client transfer
-                sendServer(cmd);
-                String line = readServer(true);   // FIXME after this line connection closed
-                int bytesTransferred = copyData(clientDataSocket, serverDataSocket);
-                server.transferComplete(new FTPGTransferEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), cmd.substring(5), bytesTransferred, true));
-                readServer(true); // should be 226 Transfer OK TODO: take action on other codes
+            }
+
+            if (clientDataSocket != null) {
+                try {
+                    clientDataSocket.close();
+                } catch (IOException ioe) {
+                    // Nothing to do here
+                }
+            }
+
+            if (dataConnect != null) dataConnect.close();
+
+            if (clientDataSocket == null) {
+                clientDataServerSocket = getServerSocket(portRanges, clientCtrlSocket.getLocalAddress());
+            }
+
+            if (clientDataServerSocket != null) {
+                int port = clientDataServerSocket.getLocalPort();
+                if (cmd.startsWith("EPSV")) {
+                    sendClient(229, "Entering Extended Passive Mode (|||" + port + "|");
+                } else {
+                    sendClient(227, "Entering Passive Mode(" + sLocalClientIP + "," +
+                            (port / 256) + "," + (port % 256) + ")");
+                }
+                setupServerConnection(clientDataServerSocket);
+
             } else {
-                sendServer(cmd);
-                readServer(true);
+                sendClient(425, "Cannot allocate local port.");
+            }
+        } else if (cmd.startsWith("PORT")) {
+            serverPassive = false;
+            int port = parsePort(fromClient);
+
+            if (clientDataServerSocket != null) {
+                try {
+                    clientDataServerSocket.close();
+                } catch (IOException ioe) {
+                }
+                clientDataServerSocket = null;
+            }
+            if (clientDataSocket != null) try {
+                clientDataSocket.close();
+            } catch (IOException ioe) {
+            }
+            if (dataConnect != null) dataConnect.close();
+
+            try {
+                clientDataSocket = new Socket(clientCtrlSocket.getInetAddress(), port);
+                sendClient(200, "PORT command successful.");
+
+                setupServerConnection(clientDataSocket);
+            } catch (IOException e) {
+                sendClient(425, "PORT command failed - try using PASV instead.");
+            }
+        } else {
+            sendServer(fromClient);
+            readServer(true);
+        }
+    }
+
+    public int[] getPortRanges() {
+        if (portRanges != null && portRanges.length != 0) {
+            return portRanges;
+        }
+        portRanges = new int[highPort - lowPort];
+        for (int i = lowPort, j = 0; i < highPort; i++) {
+            portRanges[j] = i;
+            j++;
+        }
+        return portRanges;
+    }
+
+    public static int parsePort(String s) throws IOException {
+        int port;
+        try {
+            int i = s.lastIndexOf('(');
+            int j = s.lastIndexOf(')');
+            if ((i != -1) && (j != -1) && (i < j)) {
+                s = s.substring(i + 1, j);
+            }
+
+            i = s.lastIndexOf(',');
+            j = s.lastIndexOf(',', i - 1);
+
+            port = Integer.parseInt(s.substring(i + 1));
+            port += 256 * Integer.parseInt(s.substring(j + 1, i));
+        } catch (Exception e) {
+            throw new IOException();
+        }
+        return port;
+    }
+
+    public static synchronized ServerSocket getServerSocket(int[] portRanges, InetAddress ia) throws IOException {
+        ServerSocket ss = null;
+        if (portRanges != null) {
+            // Current index of portRanges array.
+            int i;
+            int port;
+
+            Integer lastPort = (Integer) lastPorts.get(portRanges);
+            if (lastPort != null) {
+                port = lastPort.intValue();
+                for (i = 0; i < portRanges.length && port > portRanges[i + 1]; i += 2) ;
+                port++;
+            } else {
+                port = portRanges[0];
+                i = 0;
+            }
+            for (int lastTry = -2; port != lastTry; port++) {
+                if (port > portRanges[i + 1]) {
+                    i = (i + 2) % portRanges.length;
+                    port = portRanges[i];
+                }
+                if (lastTry == -1) lastTry = port;
+                try {
+                    ss = new ServerSocket(port, 1, ia);
+                    lastPorts.put(portRanges, new Integer(port));
+                    break;
+                } catch (BindException e) {
+                    // Port already in use.
+                }
+            }
+        } else {
+            ss = new ServerSocket(0, 1, ia);
+        }
+        return ss;
+    }
+
+    private void setupServerConnection(Object s) throws IOException {
+        if (serverDataSocket != null) {
+            try {
+                serverDataSocket.close();
+            } catch (IOException ioe) { }
+        }
+
+        if (serverPassive) {
+            sendServer("PASV");
+
+            String fromServer = readServer(false);
+
+            int port = parsePort(fromServer);
+
+            logger.debug("Server: " + serverCtrlSocket.getInetAddress() + ":" + port);
+
+            serverDataSocket = new Socket(serverCtrlSocket.getInetAddress(), port);
+
+            (dataConnect = new FTPGDataConnect(s, serverDataSocket)).start();
+        } else {
+            if (serverDataServerSocket == null) {
+                serverDataServerSocket = getServerSocket(null, serverCtrlSocket.getLocalAddress());
+            }
+            if (serverDataServerSocket != null) {
+                int port = serverDataServerSocket.getLocalPort();
+                sendServer("PORT " + sLocalServerIP + ',' + port / 256 + ',' + (port % 256));
+                readServer(false);
+
+                (dataConnect = new FTPGDataConnect(s, serverDataServerSocket)).start();
+            } else {
+                sendClient("425 Cannot allocate local port.");
             }
         }
-        // terminate session
-    }
-
-    private void openActiveDC(String connStr) throws IOException {
-        // Find out PORT
-        String[] connDetails = connStr.substring(5).split(",");
-        int portHigh = Integer.parseInt(connDetails[4]);
-        int portLow = Integer.parseInt(connDetails[5]);
-        int port = portHigh * 256 + portLow;
-        String host = connDetails[0] + "." + connDetails[1] + "." + connDetails[2] + "." + connDetails[3];
-
-        clientDataSocket = new Socket(host, port);
-        logger.debug("Connected to Client data channel");
-        sendClient(200, "Port command successful");
-
-        serverDataServerSocket = new ServerSocket(0);
-        port = serverDataServerSocket.getLocalPort();
-        String localServerIP = serverCtrlSocket.getLocalAddress().getHostAddress();
-        String toServer = "PORT " + localServerIP.replace('.' ,',') + ',' + port / 256 + ',' + (port % 256);
-        sendServer(toServer);
-        readServer(false);
-        serverDataSocket = serverDataServerSocket.accept();
-        logger.debug("Server connected on data channel from " + serverDataSocket.getLocalPort() + ":" + serverDataSocket.getLocalPort());
-    }
-
-    private void openPassiveDC() throws IOException {
-        // Only allow one clientDataServerSocket accepting new passive data connections per session to avoid resource leak
-        if (clientDataSocket != null && !clientDataServerSocket.isClosed()) {
-            clientDataServerSocket.close();
-        }
-        clientDataServerSocket = new ServerSocket(0);
-        int localPort = clientDataServerSocket.getLocalPort();
-        String localAddress = clientCtrlSocket.getLocalAddress().getHostAddress();
-        logger.debug("Passive channel listening on " + localAddress + " port " + localPort);
-        // waiting for connecting client.
-        logger.debug("Waiting for client to connect to clientCtrlSocket (240s)");
-        // TODO: Use real address of interface!!!
-        int clientPortHigh = localPort / 256;
-        int clientPortLow = localPort - (clientPortHigh * 256);
-        sendClient(227, "Entering Passive Mode (" + localAddress.replace('.', ',') + "," + clientPortHigh + "," + clientPortLow + ")");
-        clientDataSocket = clientDataServerSocket.accept(); // TODO Actually catch Timeout exception and handle that according to specs.
-        logger.debug("Client connected on data channel from " + clientDataSocket.getLocalAddress() + ":" + clientDataSocket.getLocalPort());
-        // TODO: Can we close/clean up clientDataServerSocket here or is it needed by the real clientDataSocket later on?
-        openServerPassiveDC();
-    }
-
-    private void openServerPassiveDC() throws IOException {
-        // Connect to server
-        sendServer("PASV");
-        String line = readServer(false);
-        if (!line.startsWith("227 ")) {
-            throw new RuntimeException("Error establishing backside passive channel." + line);
-        }
-
-        String connStr = line.substring(line.indexOf('('), line.indexOf(')') + 1);
-        String[] connDetails = connStr.split(",");
-        if (connDetails.length != 6) {
-            throw new RuntimeException("Error establishing backside passive channel." + line);
-        }
-        String serverHost = connDetails[0].substring(1) + "." + connDetails[1] + "." + connDetails[2] + "." + connDetails[3];
-        int port = Integer.parseInt(connDetails[4]) * 256 + Integer.parseInt(connDetails[5].substring(0, connDetails[5].length() - 1));
-        serverDataSocket = new Socket(serverHost, port);
-        logger.debug("Connected to Server data channel on " + serverDataSocket.getLocalAddress().toString() + " : " + serverDataSocket.getLocalPort());
     }
 
     private void showWelcome() {
@@ -217,6 +316,7 @@ public class FTPGSession implements Runnable {
             serverCtrlSocket = new Socket(target.getHost(), target.getPort());
             inServer = new BufferedReader(new InputStreamReader(serverCtrlSocket.getInputStream()));
             outServer = new PrintStream(serverCtrlSocket.getOutputStream(), true);
+            sLocalServerIP = serverCtrlSocket.getLocalAddress().getHostAddress().replace(".", ",");
         } catch (IOException e) {
             logger.error("Error connecting to backend server", e);
             sendClient(500, "Error connecting to target server");
@@ -241,41 +341,6 @@ public class FTPGSession implements Runnable {
 
         server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), true));
         // TODO: if password is wrong - we should terminate session, or retry the password phase.
-    }
-
-    // Any data copy function between Sockets
-    private int copyData(Socket sender, Socket receiver) throws IOException {
-        int bytesRead = 0;
-        int totalBytes = 0;
-        InputStream is = null;
-        OutputStream os = null;
-        try {
-            is = sender.getInputStream();
-            os = receiver.getOutputStream();
-            do {
-                byte[] bytes = new byte[256];
-                bytesRead = is.read(bytes);
-                totalBytes += bytesRead;
-                if (bytesRead > 0) { // bytesRead = -1 means EOF
-                    os.write(bytes, 0, bytesRead);
-                }
-            } while (bytesRead > 0);
-        } catch (IOException e) {
-            // Does not really matter, just close connections when done
-            // TODO not sure if it's reasonable to log a warning here?
-        } finally {
-
-            // TODO: Close both input and output streams to flush potential data
-
-            // Okay, a stream is closed. Just make sure we do close the other one.
-            if (!sender.isClosed()) {
-                sender.close();
-            }
-            if (!receiver.isClosed()) {
-                receiver.close();
-            }
-        }
-        return totalBytes;
     }
 
     private FTPGTarget lookup(String clientUsername, String clientIP) throws IOException {
@@ -327,7 +392,7 @@ public class FTPGSession implements Runnable {
 
     private void sendClient(String text) {
         outClient.print(text + CRLF);
-        logger.debug("To Client: " + text);
+        logger.trace("To Client: " + text);
     }
 
     private String readServer(boolean forwardToClient) throws IOException {
@@ -360,7 +425,7 @@ public class FTPGSession implements Runnable {
         }
 
         if (forwardToClient || response == 110) {   // 110 Restart marker reply
-            outClient.print(fromServer + CRLF);
+            sendClient(fromServer);
         }
         logger.debug("From server: " + fromServer);
 
@@ -375,9 +440,4 @@ public class FTPGSession implements Runnable {
         logger.debug("To Server: " + text);
         outServer.print(text + CRLF);
     }
-
-    Socket getClientCtrlSocket() {
-        return clientCtrlSocket;
-    }
-
 }

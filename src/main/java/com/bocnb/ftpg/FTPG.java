@@ -9,7 +9,7 @@ import java.io.IOException;
 public class FTPG {
     public static void main(String[] args) throws IOException {
         // default parameters
-        String configLocation = "file:///" + System.getProperty("user.dir") + "\\sample.routes";
+        String configLocation = "file:///" + System.getProperty("user.dir") + "/sample.routes";
         long configCacheTime = 6000; // in milliseconds
         int port = 2121; // usually port 21 needs administrator/root privilege
 
