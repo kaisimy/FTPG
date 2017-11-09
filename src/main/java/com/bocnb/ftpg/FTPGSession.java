@@ -31,28 +31,21 @@ public class FTPGSession implements Runnable {
     private PrintStream outClient, outServer;
     private BufferedReader inClient, inServer;
 
-    // Data sockets & io
+    // Data sockets
     private ServerSocket clientDataServerSocket, serverDataServerSocket;
     private Socket clientDataSocket, serverDataSocket;
 
-    // Client info
-    private String clientUsername;
-    private String clientPassword;
-    private String clientIP;
-
     // Others
     private FTPGServer server;
-    private FTPGTarget target;
     private FTPGDataConnect dataConnect;
     String sLocalClientIP;
     String sLocalServerIP;
 
     // Static members
     private static String CRLF = "\r\n";
-    private static int SOCKET_TIMEOUT = 60000; // in milliseconds
     private static int[] portRanges; // for passive connection
     private final static int lowPort = 50000;
-    private final static int highPort = 50100;
+    private final static int highPort = 50010;
     private final static Map lastPorts = new HashMap();
 
     FTPGSession(Socket clientCtrlSocket, FTPGServer server) {
@@ -67,11 +60,10 @@ public class FTPGSession implements Runnable {
         try {
             outClient = new PrintStream(clientCtrlSocket.getOutputStream(), true);
             inClient = new BufferedReader(new InputStreamReader(clientCtrlSocket.getInputStream()));
-            // clientCtrlSocket.setSoTimeout(SOCKET_TIMEOUT);
 
             try {
-                showWelcome();
-                loginSequence();
+                welcome();
+                login();
                 running = true;
                 while (true) {
                     String s = inClient.readLine();
@@ -92,19 +84,18 @@ public class FTPGSession implements Runnable {
                     clientCtrlSocket.close();
                 }
             } catch (IOException e1) {
-                logger.warn("Error closing clientCtrlSocket", e1);
+                logger.warn("Error closing client control socket", e1);
             }
         }
     }
 
     private void readCommand(String fromClient) throws IOException {
-        String cmd = fromClient;
-        if (!userLoggedIn && (cmd.startsWith("PASV") || cmd.startsWith("PORT"))) {
+        if (!userLoggedIn && (fromClient.startsWith("PASV") || fromClient.startsWith("PORT"))) {
             sendClient(530, "Not logged in.");
             return;
         }
 
-        if (cmd.startsWith("PASV") || cmd.startsWith("EPSV")) {
+        if (fromClient.startsWith("PASV") || fromClient.startsWith("EPSV")) {
             serverPassive = true;
             if (clientDataServerSocket != null) {
                 try {
@@ -124,13 +115,13 @@ public class FTPGSession implements Runnable {
 
             if (dataConnect != null) dataConnect.close();
 
-            if (clientDataSocket == null) {
+            if (clientDataServerSocket == null) {
                 clientDataServerSocket = getServerSocket(portRanges, clientCtrlSocket.getLocalAddress());
             }
 
             if (clientDataServerSocket != null) {
                 int port = clientDataServerSocket.getLocalPort();
-                if (cmd.startsWith("EPSV")) {
+                if (fromClient.startsWith("EPSV")) {
                     sendClient(229, "Entering Extended Passive Mode (|||" + port + "|");
                 } else {
                     sendClient(227, "Entering Passive Mode(" + sLocalClientIP + "," +
@@ -141,7 +132,7 @@ public class FTPGSession implements Runnable {
             } else {
                 sendClient(425, "Cannot allocate local port.");
             }
-        } else if (cmd.startsWith("PORT")) {
+        } else if (fromClient.startsWith("PORT")) {
             serverPassive = false;
             int port = parsePort(fromClient);
 
@@ -149,12 +140,14 @@ public class FTPGSession implements Runnable {
                 try {
                     clientDataServerSocket.close();
                 } catch (IOException ioe) {
+                    // Nothing to do
                 }
                 clientDataServerSocket = null;
             }
             if (clientDataSocket != null) try {
                 clientDataSocket.close();
             } catch (IOException ioe) {
+                // Nothing to do
             }
             if (dataConnect != null) dataConnect.close();
 
@@ -172,7 +165,7 @@ public class FTPGSession implements Runnable {
         }
     }
 
-    public int[] getPortRanges() {
+    private int[] getPortRanges() {
         if (portRanges != null && portRanges.length != 0) {
             return portRanges;
         }
@@ -184,7 +177,7 @@ public class FTPGSession implements Runnable {
         return portRanges;
     }
 
-    public static int parsePort(String s) throws IOException {
+    private static int parsePort(String s) throws IOException {
         int port;
         try {
             int i = s.lastIndexOf('(');
@@ -204,7 +197,13 @@ public class FTPGSession implements Runnable {
         return port;
     }
 
-    public static synchronized ServerSocket getServerSocket(int[] portRanges, InetAddress ia) throws IOException {
+    private int parseIp(String s) {
+        String[] d = s.split("\\.");
+        return Integer.parseInt(d[0]) * 256 * 256 * 256 + Integer.parseInt(d[1]) * 256 * 256 +
+                Integer.parseInt(d[2]) * 256 + Integer.parseInt(d[3]);
+    }
+
+    private static synchronized ServerSocket getServerSocket(int[] portRanges, InetAddress ia) throws IOException {
         ServerSocket ss = null;
         if (portRanges != null) {
             // Current index of portRanges array.
@@ -213,7 +212,7 @@ public class FTPGSession implements Runnable {
 
             Integer lastPort = (Integer) lastPorts.get(portRanges);
             if (lastPort != null) {
-                port = lastPort.intValue();
+                port = lastPort;
                 for (i = 0; i < portRanges.length && port > portRanges[i + 1]; i += 2) ;
                 port++;
             } else {
@@ -225,10 +224,10 @@ public class FTPGSession implements Runnable {
                     i = (i + 2) % portRanges.length;
                     port = portRanges[i];
                 }
-                if (lastTry == -1) lastTry = port;
+                if (lastTry == -1) lastTry = port;  // FIXME: if condition is always false
                 try {
                     ss = new ServerSocket(port, 1, ia);
-                    lastPorts.put(portRanges, new Integer(port));
+                    lastPorts.put(portRanges, port);
                     break;
                 } catch (BindException e) {
                     // Port already in use.
@@ -244,7 +243,9 @@ public class FTPGSession implements Runnable {
         if (serverDataSocket != null) {
             try {
                 serverDataSocket.close();
-            } catch (IOException ioe) { }
+            } catch (IOException ioe) {
+                // Nothing to do here
+            }
         }
 
         if (serverPassive) {
@@ -270,48 +271,51 @@ public class FTPGSession implements Runnable {
 
                 (dataConnect = new FTPGDataConnect(s, serverDataServerSocket)).start();
             } else {
-                sendClient("425 Cannot allocate local port.");
+                sendClient(425, "Cannot allocate local port.");
             }
         }
     }
 
-    private void showWelcome() {
-        sendClient("220-Welcome to FTPG" + CRLF + "220-Have a nice day" + CRLF + "220 :-)");
+    private void welcome() {
+        sendClient("220-Welcome to the desert of the real" + CRLF +
+                "220-Have a nice day" + CRLF +
+                "220 :-)");
     }
 
-    private void loginSequence() throws IOException, InterruptedException {
+    private void login() throws IOException, InterruptedException {
         String line = readClient();
         while (!line.startsWith("USER ") || line.length() < 6) {
             sendClient(530, "Please login with USER and PASS first");
             line = readClient();
         }
 
-        String username = line.substring(5);
+        String clientUsername = line.substring(5);
         // Ok. ask for password
-        sendClient(331, "Password required for " + username);
+        sendClient(331, "Password required for " + clientUsername);
 
         line = readClient();
         while (!line.startsWith("PASS ") || line.length() < 6) {
-            sendClient(331, "Password required for " + username);
+            sendClient(331, "Password required for " + clientUsername);
             line = readClient();
         }
 
-        // We got ok credentials
-        clientPassword = line.substring(5);
-        clientUsername = username;
+        // We got credentials
+        String clientPassword = line.substring(5);
 
         // Look up target server and target username
-        clientIP = clientCtrlSocket.getInetAddress().toString();
+        String clientIP = clientCtrlSocket.getInetAddress().toString();
         clientIP = clientIP.substring(clientIP.indexOf('/') + 1);
-        target = lookup(clientUsername, clientIP);
+        FTPGTarget target = lookup(clientUsername, clientIP);
         if (target == null) {
             sendClient(421, "Service not available, closing control connection.");
-            server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, "N/A", "N/A", false));
+            server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername,
+                    "N/A", "N/A", false));
             throw new RuntimeException("No valid route found for user");
         }
 
         // Connect to server
-        logger.debug("Connecting to backend server " + target.getUsername() + "@" + target.getHost() + ":" + target.getPort());
+        logger.debug("Connecting to backend server " +
+                target.getUsername() + "@" + target.getHost() + ":" + target.getPort());
         try {
             serverCtrlSocket = new Socket(target.getHost(), target.getPort());
             inServer = new BufferedReader(new InputStreamReader(serverCtrlSocket.getInputStream()));
@@ -335,12 +339,13 @@ public class FTPGSession implements Runnable {
         sendServer("PASS " + clientPassword);
         readServer(true);
         if (!userLoggedIn) {
-            server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), false));
+            server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(),
+                    target.getHost() + ":" + target.getPort(), false));
             throw new RuntimeException("Login failed. terminating this thread.");
         }
 
-        server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(), target.getHost() + ":" + target.getPort(), true));
-        // TODO: if password is wrong - we should terminate session, or retry the password phase.
+        server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(),
+                target.getHost() + ":" + target.getPort(), true));
     }
 
     private FTPGTarget lookup(String clientUsername, String clientIP) throws IOException {
@@ -360,25 +365,16 @@ public class FTPGSession implements Runnable {
 
     private boolean inRange(String ipStr, String cidr) {
 
-        int ip = ipStrToInt(ipStr);
+        int ip = parseIp(ipStr);
 
         String[] cidrParts = cidr.split("/");
         int netBits = 0;
         if (cidrParts.length == 2) {
             netBits = Integer.parseInt(cidrParts[1]);
         }
-        int net = ipStrToInt(cidrParts[0]);
+        int net = parseIp(cidrParts[0]);
         int mask = 0xffffffff << (32 - netBits);
         return (ip & mask) == net;
-    }
-
-    private int ipStrToInt(String ip) {
-        String[] d = ip.split("\\.");
-        return Integer.parseInt(d[0]) * 256 * 256 * 256 + Integer.parseInt(d[1]) * 256 * 256 + Integer.parseInt(d[2]) * 256 + Integer.parseInt(d[3]);
-    }
-
-    private void sendClient(int code, String text) {
-        sendClient(Integer.toString(code) + " " + text);
     }
 
     private String readClient() throws InterruptedException, IOException {
@@ -386,8 +382,12 @@ public class FTPGSession implements Runnable {
         while ((line = inClient.readLine()) == null) {
             Thread.sleep(50L);
         }
-        logger.debug("From Client: " + line);
+        logger.trace("From Client: " + line);
         return line;
+    }
+
+    private void sendClient(int code, String text) {
+        sendClient(Integer.toString(code) + " " + text);
     }
 
     private void sendClient(String text) {
@@ -406,7 +406,7 @@ public class FTPGSession implements Runnable {
                 if (forwardToClient) {
                     sendClient(fromServer);
                 }
-                logger.debug("From server: " + fromServer);
+                logger.trace("From server: " + fromServer);
 
                 fromServer = inServer.readLine();
             }
@@ -427,7 +427,7 @@ public class FTPGSession implements Runnable {
         if (forwardToClient || response == 110) {   // 110 Restart marker reply
             sendClient(fromServer);
         }
-        logger.debug("From server: " + fromServer);
+        logger.trace("From server: " + fromServer);
 
         if (response >= 100 && response <= 199) {
             firstLine = readServer(true);
@@ -437,7 +437,7 @@ public class FTPGSession implements Runnable {
     }
 
     private void sendServer(String text) {
-        logger.debug("To Server: " + text);
+        logger.trace("To Server: " + text);
         outServer.print(text + CRLF);
     }
 }

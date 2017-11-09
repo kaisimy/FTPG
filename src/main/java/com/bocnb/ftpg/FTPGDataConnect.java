@@ -22,13 +22,13 @@ public class FTPGDataConnect extends Thread {
     private final Object mutex = new Object();
 
     // Each argument may be either a Socket or a ServerSocket.
-    public FTPGDataConnect(Object o1, Object o2) {
+    FTPGDataConnect(Object o1, Object o2) {
         this.o = new Object[]{o1, o2};
     }
 
     public void run() {
-        BufferedInputStream bis = null;
-        BufferedOutputStream bos = null;
+        BufferedInputStream bis;
+        BufferedOutputStream bos;
 
         try {
             // n = 0 - Thread Copy socket 0 to socket 1
@@ -71,24 +71,22 @@ public class FTPGDataConnect extends Thread {
                 bos.write(buffer, 0, i);
             }
             bos.flush();
-        } catch (SocketException e) {
-            // Socket closed.
         } catch (IOException e) {
-            logger.debug("", e);
+            // Nothing to do here
         }
         close();
     }
 
-    public void close() {
+    void close() {
         try {
             sockets[0].close();
         } catch (Exception e) {
-            // TODO make sure socket closed
+            // Nothing to do here
         }
         try {
             sockets[1].close();
         } catch (Exception e) {
-            // TODO make sure socket closed
+            // Nothing to do here
         }
     }
 }
