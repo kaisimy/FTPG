@@ -1,4 +1,4 @@
-FTPG is a FTP Gateway to implement reverse proxy functionality for FTP connections.
+FTPG is an implementation of reverse proxy functionality for FTP connections.
 
 FTPG features
 - Server lookup based on username and source IP.

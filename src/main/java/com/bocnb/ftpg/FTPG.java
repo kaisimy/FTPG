@@ -1,6 +1,10 @@
 /*
   FTPG 主类
   @author Xiao Guangting 2017/9/27
+
+  启动FTPG代理进程, 从该主类运行main函数;
+  不带参运行main时, 默认使用当前目录下的sample.routes, 监听2121端口, 配置文件缓存1分钟(即修改配置1分钟后生效);
+  带参运行时包含三个参数: <配置URL> <配置文件缓存时间(毫秒)> <监听端口>
  */
 package com.bocnb.ftpg;
 
@@ -8,12 +12,12 @@ import java.io.IOException;
 
 public class FTPG {
     public static void main(String[] args) throws IOException {
-        // default parameters
+        // Default params
         String configLocation = "file:///" + System.getProperty("user.dir") + "/sample.routes";
-        long configCacheTime = 6000; // in milliseconds
-        int port = 2121; // usually port 21 needs administrator/root privilege
+        long configCacheTime = 60000; // in milliseconds
+        int port = 2121; // 监听21端口通常需要管理员权限
 
-        // user specified params
+        // User specified params
         if (args.length == 3) {
             try {
                 configLocation = args[0];

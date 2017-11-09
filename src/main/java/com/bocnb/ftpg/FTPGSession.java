@@ -45,7 +45,7 @@ public class FTPGSession implements Runnable {
     private static String CRLF = "\r\n";
     private static int[] portRanges; // for passive connection
     private final static int lowPort = 50000;
-    private final static int highPort = 50010;
+    private final static int highPort = 50500;
     private final static Map lastPorts = new HashMap();
 
     FTPGSession(Socket clientCtrlSocket, FTPGServer server) {
