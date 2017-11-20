@@ -9,9 +9,8 @@ import java.net.BindException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Random;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,15 +42,13 @@ public class FTPGSession implements Runnable {
 
     // Static members
     private static String CRLF = "\r\n";
-    private static int[] portRanges; // for passive connection
     private final static int lowPort = 50000;
     private final static int highPort = 50500;
-    private final static Map lastPorts = new HashMap();
+    private static int TIME_OUT = 24000;
 
     FTPGSession(Socket clientCtrlSocket, FTPGServer server) {
         this.clientCtrlSocket = clientCtrlSocket;
         this.sLocalClientIP = clientCtrlSocket.getLocalAddress().getHostAddress().replace('.', ',');
-        portRanges = getPortRanges();
         this.server = server;
     }
 
@@ -60,33 +57,34 @@ public class FTPGSession implements Runnable {
         try {
             outClient = new PrintStream(clientCtrlSocket.getOutputStream(), true);
             inClient = new BufferedReader(new InputStreamReader(clientCtrlSocket.getInputStream()));
+            this.clientCtrlSocket.setSoTimeout(TIME_OUT);
 
             try {
                 welcome();
                 login();
                 running = true;
-                while (true) {
+                while (running) {
                     String s = inClient.readLine();
                     if (s == null) {
                         running = false;
-                        break;
                     }
                     readCommand(s);
                 }
-            } catch (Exception re) {
+                terminate();
+            } catch (RuntimeException rte) {
                 // TODO: Treat the following error with some logic. There could be many reasons.
-                logger.error("Fatal error in FTPG session. Terminating this client", re);
+                logger.error("Fatal error in FTPG session, terminating this client", rte);
+                terminate();
+            } catch (Exception e) {
+                // Usually time out exception
+                logger.debug("Session terminated.", e);
+                terminate();
             }
-        } catch (IOException e) {
-            logger.error("", e);
-            try {
-                if (!clientCtrlSocket.isClosed()) {
-                    clientCtrlSocket.close();
-                }
-            } catch (IOException e1) {
-                logger.warn("Error closing client control socket", e1);
-            }
+        } catch (IOException ioe) {
+            logger.error("", ioe);
+            terminate();
         }
+
     }
 
     private void readCommand(String fromClient) throws IOException {
@@ -100,6 +98,7 @@ public class FTPGSession implements Runnable {
             if (clientDataServerSocket != null) {
                 try {
                     clientDataServerSocket.close();
+                    clientDataServerSocket = null;
                 } catch (IOException ioe) {
                     // Nothing to do here
                 }
@@ -108,15 +107,19 @@ public class FTPGSession implements Runnable {
             if (clientDataSocket != null) {
                 try {
                     clientDataSocket.close();
+                    clientDataSocket = null;
                 } catch (IOException ioe) {
                     // Nothing to do here
                 }
             }
 
-            if (dataConnect != null) dataConnect.close();
+            if (dataConnect != null) {
+                dataConnect.close();
+                dataConnect = null;
+            }
 
             if (clientDataServerSocket == null) {
-                clientDataServerSocket = getServerSocket(portRanges, clientCtrlSocket.getLocalAddress());
+                clientDataServerSocket = getServerSocket(true, clientCtrlSocket.getLocalAddress());
             }
 
             if (clientDataServerSocket != null) {
@@ -165,18 +168,6 @@ public class FTPGSession implements Runnable {
         }
     }
 
-    private int[] getPortRanges() {
-        if (portRanges != null && portRanges.length != 0) {
-            return portRanges;
-        }
-        portRanges = new int[highPort - lowPort];
-        for (int i = lowPort, j = 0; i < highPort; i++) {
-            portRanges[j] = i;
-            j++;
-        }
-        return portRanges;
-    }
-
     private static int parsePort(String s) throws IOException {
         int port;
         try {
@@ -203,36 +194,24 @@ public class FTPGSession implements Runnable {
                 Integer.parseInt(d[2]) * 256 + Integer.parseInt(d[3]);
     }
 
-    private static synchronized ServerSocket getServerSocket(int[] portRanges, InetAddress ia) throws IOException {
+    private static synchronized ServerSocket getServerSocket(Boolean bindPorts, InetAddress ia) throws IOException {
         ServerSocket ss = null;
-        if (portRanges != null) {
-            // Current index of portRanges array.
-            int i;
+        if (bindPorts) {
             int port;
 
-            Integer lastPort = (Integer) lastPorts.get(portRanges);
-            if (lastPort != null) {
-                port = lastPort;
-                for (i = 0; i < portRanges.length && port > portRanges[i + 1]; i += 2) ;
-                port++;
-            } else {
-                port = portRanges[0];
-                i = 0;
-            }
-            for (int lastTry = -2; port != lastTry; port++) {
-                if (port > portRanges[i + 1]) {
-                    i = (i + 2) % portRanges.length;
-                    port = portRanges[i];
-                }
-                if (lastTry == -1) lastTry = port;  // FIXME: if condition is always false
+            int count = 0;
+            while (count < highPort - lowPort) {
+                count++;
+                Random r = new Random();
+                port = r.nextInt(highPort - lowPort) + lowPort;
                 try {
                     ss = new ServerSocket(port, 1, ia);
-                    lastPorts.put(portRanges, port);
                     break;
                 } catch (BindException e) {
                     // Port already in use.
                 }
             }
+
         } else {
             ss = new ServerSocket(0, 1, ia);
         }
@@ -255,14 +234,14 @@ public class FTPGSession implements Runnable {
 
             int port = parsePort(fromServer);
 
-            logger.debug("Server: " + serverCtrlSocket.getInetAddress() + ":" + port);
-
             serverDataSocket = new Socket(serverCtrlSocket.getInetAddress(), port);
+
+            logger.debug("Proxy -> Server: " + serverCtrlSocket.getInetAddress() + ":" + port);
 
             (dataConnect = new FTPGDataConnect(s, serverDataSocket)).start();
         } else {
             if (serverDataServerSocket == null) {
-                serverDataServerSocket = getServerSocket(null, serverCtrlSocket.getLocalAddress());
+                serverDataServerSocket = getServerSocket(false, serverCtrlSocket.getLocalAddress());
             }
             if (serverDataServerSocket != null) {
                 int port = serverDataServerSocket.getLocalPort();
@@ -278,6 +257,7 @@ public class FTPGSession implements Runnable {
 
     private void welcome() {
         sendClient("220-Welcome to the desert of the real" + CRLF +
+                "220-You will be disconnected after 4 minutes of inactivity" + CRLF +
                 "220-Have a nice day" + CRLF +
                 "220 :-)");
     }
@@ -422,6 +402,8 @@ public class FTPGSession implements Runnable {
                 connectionClosed = true;
             }
             userLoggedIn = false;
+
+            terminate();
         }
 
         if (forwardToClient || response == 110) {   // 110 Restart marker reply
@@ -439,5 +421,27 @@ public class FTPGSession implements Runnable {
     private void sendServer(String text) {
         logger.trace("To Server: " + text);
         outServer.print(text + CRLF);
+    }
+
+    private void terminate() {
+        try {
+            logger.debug("Session terminated.");
+            running = false;
+
+            if (!clientCtrlSocket.isClosed()) {
+                clientCtrlSocket.close();
+            }
+            if (clientDataSocket != null && !clientDataSocket.isClosed()) {
+                clientDataSocket.close();
+            }
+            if (serverCtrlSocket != null && !serverCtrlSocket.isClosed()) {
+                serverCtrlSocket.close();
+            }
+            if (serverDataSocket != null && !serverDataSocket.isClosed()) {
+                serverDataSocket.close();
+            }
+        } catch (IOException e) {
+            // Nothing to do here
+        }
     }
 }

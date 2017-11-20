@@ -8,7 +8,6 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketException;
 
 public class FTPGDataConnect extends Thread {
     private final static Logger logger = LoggerFactory.getLogger(FTPGDataConnect.class);
@@ -80,13 +79,10 @@ public class FTPGDataConnect extends Thread {
     void close() {
         try {
             sockets[0].close();
-        } catch (Exception e) {
-            // Nothing to do here
-        }
-        try {
             sockets[1].close();
         } catch (Exception e) {
             // Nothing to do here
         }
+        logger.debug("Data connect thread stopped.");
     }
 }
