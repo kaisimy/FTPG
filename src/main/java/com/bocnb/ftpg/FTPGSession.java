@@ -44,7 +44,7 @@ public class FTPGSession implements Runnable {
     private static String CRLF = "\r\n";
     private final static int lowPort = 50000;
     private final static int highPort = 50500;
-    private static int TIME_OUT = 24000;
+    private static int TIME_OUT = 240000;
 
     FTPGSession(Socket clientCtrlSocket, FTPGServer server) {
         this.clientCtrlSocket = clientCtrlSocket;
@@ -68,7 +68,9 @@ public class FTPGSession implements Runnable {
                     if (s == null) {
                         running = false;
                     }
-                    readCommand(s);
+                    else {
+                        readCommand(s);
+                    }
                 }
                 terminate();
             } catch (RuntimeException rte) {
