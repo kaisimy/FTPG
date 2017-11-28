@@ -83,6 +83,5 @@ public class FTPGDataConnect extends Thread {
         } catch (Exception e) {
             // Nothing to do here
         }
-        logger.debug("Data connect thread stopped.");
     }
 }

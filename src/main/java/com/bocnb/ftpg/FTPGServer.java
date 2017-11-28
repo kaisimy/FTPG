@@ -7,37 +7,56 @@ package com.bocnb.ftpg;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.HashMap;
 
 import org.apache.log4j.PropertyConfigurator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public class FTPGServer {
     private static final Logger logger = LoggerFactory.getLogger(FTPGServer.class);
-    private boolean running = true;
-    private HashMap<Socket, FTPGSession> sessions = new HashMap<>();
     private FTPGConfig config;
 
-    FTPGServer(String configLocation, long cacheTime) throws SecurityException, IOException {
+    /**
+     * Executors.newCachedThreadPool() launches new thread as needed and usage idle threads
+     * idle threads will die after being unused for 60 seconds
+     */
+    protected ExecutorService executor;
+
+    /**
+     * Constructor for FTPGServer
+     *
+     * @param configLocation config location, could be any uri
+     * @param cacheTime      config will apply changes when exceeding config file cache time (default 1 min)
+     */
+    FTPGServer(String configLocation, long cacheTime) {
         // setup Log4J properties file
         String log4jConfPath = "log4j.properties";
         PropertyConfigurator.configure(log4jConfPath);
-        // setup
+        // setup config params
         config = new FTPGConfig(configLocation, cacheTime);
+
+        executor = Executors.newCachedThreadPool();
     }
 
+    /**
+     * Start a server socket listening ftp client connection
+     *
+     * @param port listening port
+     * @throws IOException throws IOException when fail to start server socket
+     */
     public void start(int port) throws IOException {
         ServerSocket serverSocket = new ServerSocket(port);
 
         logger.info("FTPG Started");
 
-        while (running) {
+        while (true) {
             try {
                 Socket socket = serverSocket.accept();
                 FTPGSession session = new FTPGSession(socket, this);
-                sessions.put(socket, session);
-                (new Thread(session)).start();
+                executor.execute(session);
             } catch (IOException e) {
                 logger.error("Accept failed", e);
 
@@ -46,7 +65,7 @@ public class FTPGServer {
                 } catch (Exception ex) {
                     logger.error("", ex);
                 }
-                return;
+                break;
             }
         }
         if (!serverSocket.isClosed()) {
@@ -56,18 +75,6 @@ public class FTPGServer {
                 logger.error("", e);
             }
         }
-    }
-
-    public boolean isRunning() {
-        return running;
-    }
-
-    public void setRunning(boolean running) {
-        this.running = running;
-    }
-
-    public HashMap<Socket, FTPGSession> getSessions() {
-        return sessions;
     }
 
     public FTPGConfig getConfig() {

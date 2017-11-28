@@ -20,7 +20,6 @@ public class FTPGSession implements Runnable {
 
     // Booleans
     private boolean userLoggedIn = false;
-    private boolean connectionClosed = false;
     private boolean running;
     private boolean serverPassive;
 
@@ -72,7 +71,6 @@ public class FTPGSession implements Runnable {
                         readCommand(s);
                     }
                 }
-                terminate();
             } catch (RuntimeException rte) {
                 // TODO: Treat the following error with some logic. There could be many reasons.
                 logger.error("Fatal error in FTPG session, terminating this client", rte);
@@ -116,7 +114,6 @@ public class FTPGSession implements Runnable {
             }
 
             if (dataConnect != null) {
-                dataConnect.close();
                 dataConnect = null;
             }
 
@@ -154,7 +151,9 @@ public class FTPGSession implements Runnable {
             } catch (IOException ioe) {
                 // Nothing to do
             }
-            if (dataConnect != null) dataConnect.close();
+            if (dataConnect != null) {
+                dataConnect = null;
+            }
 
             try {
                 clientDataSocket = new Socket(clientCtrlSocket.getInetAddress(), port);
@@ -400,9 +399,6 @@ public class FTPGSession implements Runnable {
         }
         // 221 Goodbye, 421 Service not available, 530 Login failed
         else if (response == 221 || response == 421 || response == 530) {
-            if (userLoggedIn) {
-                connectionClosed = true;
-            }
             userLoggedIn = false;
 
             terminate();

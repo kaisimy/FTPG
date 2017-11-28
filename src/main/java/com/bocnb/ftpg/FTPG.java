@@ -11,6 +11,7 @@ package com.bocnb.ftpg;
 import java.io.IOException;
 
 public class FTPG {
+
     public static void main(String[] args) throws IOException {
         // Default params
         String configLocation = "file:///" + System.getProperty("user.dir") + "/sample.routes";
@@ -34,6 +35,7 @@ public class FTPG {
             System.out.println("Example: FTPG file:///C:\\sample.routes 60000 2121");
             System.exit(1);
         }
+
         FTPGServer server = new FTPGServer(configLocation, configCacheTime);
         server.start(port);
     }
