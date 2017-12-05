@@ -1,16 +1,12 @@
 package com.bocnb.ftpg;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-public class FTPGDataConnect extends Thread {
-    private final static Logger logger = LoggerFactory.getLogger(FTPGDataConnect.class);
+public class FTPGDataConnect implements Runnable {
     private final static int DATA_BUFFER_SIZE = 512;
 
     private byte buffer[] = new byte[DATA_BUFFER_SIZE];

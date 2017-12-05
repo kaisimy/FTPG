@@ -36,6 +36,7 @@ public class FTPGSession implements Runnable {
     // Others
     private FTPGServer server;
     private FTPGDataConnect dataConnect;
+    private FTPGLoginEvent loginEvent;
     String sLocalClientIP;
     String sLocalServerIP;
 
@@ -164,8 +165,26 @@ public class FTPGSession implements Runnable {
                 sendClient(425, "PORT command failed - try using PASV instead.");
             }
         } else {
-            sendServer(fromClient);
-            readServer(true);
+            if (fromClient.startsWith("RETR") || fromClient.startsWith("REST")) {
+                logger.debug("File download: " + fromClient.substring(5));
+                sendServer(fromClient);
+                String line = readServer(true);
+                if (line.startsWith("226")) { // transfer success
+                    server.transferComplete(new FTPGTransferEvent(loginEvent.clientIP, loginEvent.clientUser, loginEvent.serverUser, loginEvent.serverHost, fromClient.substring(5), false));
+                }
+            }
+            else if (fromClient.startsWith("STOR") || fromClient.startsWith("STOU")) {
+                logger.debug("File upload: " + fromClient.substring(5));
+                sendServer(fromClient);
+                String line = readServer(true);
+                if (line.startsWith("226")) { // transfer success
+                    server.transferComplete(new FTPGTransferEvent(loginEvent.clientIP, loginEvent.clientUser, loginEvent.serverUser, loginEvent.serverHost, fromClient.substring(5), true));
+                }
+            }
+            else {
+                sendServer(fromClient);
+                readServer(true);
+            }
         }
     }
 
@@ -239,7 +258,8 @@ public class FTPGSession implements Runnable {
 
             logger.debug("Proxy -> Server: " + serverCtrlSocket.getInetAddress() + ":" + port);
 
-            (dataConnect = new FTPGDataConnect(s, serverDataSocket)).start();
+            dataConnect = new FTPGDataConnect(s, serverDataSocket);
+            this.server.executor.execute(dataConnect);
         } else {
             if (serverDataServerSocket == null) {
                 serverDataServerSocket = getServerSocket(false, serverCtrlSocket.getLocalAddress());
@@ -249,13 +269,17 @@ public class FTPGSession implements Runnable {
                 sendServer("PORT " + sLocalServerIP + ',' + port / 256 + ',' + (port % 256));
                 readServer(false);
 
-                (dataConnect = new FTPGDataConnect(s, serverDataServerSocket)).start();
+                dataConnect = new FTPGDataConnect(s, serverDataServerSocket);
+                this.server.executor.execute(dataConnect);
             } else {
                 sendClient(425, "Cannot allocate local port.");
             }
         }
     }
 
+    /**
+     * Send welcome message to client
+     */
     private void welcome() {
         sendClient("220-Welcome to the desert of the real" + CRLF +
                 "220-You will be disconnected after 4 minutes of inactivity" + CRLF +
@@ -325,8 +349,9 @@ public class FTPGSession implements Runnable {
             throw new RuntimeException("Login failed. terminating this thread.");
         }
 
-        server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(),
-                target.getHost() + ":" + target.getPort(), true));
+        loginEvent = new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(),
+                target.getHost() + ":" + target.getPort(), true);
+        server.loginComplete(loginEvent);
     }
 
     private FTPGTarget lookup(String clientUsername, String clientIP) throws IOException {

@@ -10,17 +10,15 @@ class FTPGTransferEvent {
     String serverUser;
     String serverHost;
     String filename;
-    int bytes;
     boolean upload;
 
     FTPGTransferEvent(String clientIP, String clientUser,
-                      String serverUser, String serverHost, String filename, int bytes, boolean upload) {
+                      String serverUser, String serverHost, String filename, boolean upload) {
         this.clientIP = clientIP;
         this.clientUser = clientUser;
         this.serverUser = serverUser;
         this.serverHost = serverHost;
         this.filename = filename;
-        this.bytes = bytes;
         this.upload = upload;
     }
 }

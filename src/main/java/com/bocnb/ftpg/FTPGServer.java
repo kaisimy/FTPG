@@ -82,8 +82,7 @@ public class FTPGServer {
     }
 
     public synchronized void transferComplete(FTPGTransferEvent te) {
-        logger.info((te.upload ? "Uploaded: " : "Downloaded: ") + te.filename + "(" + te.bytes + "bytes" + ") by " + te.clientUser + "@" + te.clientIP + " at " + te.serverUser + "@" + te.serverHost);
-
+        logger.info((te.upload ? "Uploaded: " : "Downloaded: ") + te.filename + " by " + te.clientUser + "@" + te.clientIP + " at " + te.serverUser + "@" + te.serverHost);
     }
 
     public synchronized void loginComplete(FTPGLoginEvent le) {
