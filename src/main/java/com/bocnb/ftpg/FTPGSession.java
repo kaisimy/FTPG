@@ -288,20 +288,20 @@ public class FTPGSession implements Runnable {
     }
 
     private void login() throws IOException, InterruptedException {
-        String line = readClient();
+        String line = inClient.readLine();
         while (!line.startsWith("USER ") || line.length() < 6) {
             sendClient(530, "Please login with USER and PASS first");
-            line = readClient();
+            line = inClient.readLine();
         }
 
         String clientUsername = line.substring(5);
         // Ok. ask for password
         sendClient(331, "Password required for " + clientUsername);
 
-        line = readClient();
+        line = inClient.readLine();
         while (!line.startsWith("PASS ") || line.length() < 6) {
             sendClient(331, "Password required for " + clientUsername);
-            line = readClient();
+            line = inClient.readLine();
         }
 
         // We got credentials
@@ -381,15 +381,6 @@ public class FTPGSession implements Runnable {
         int net = parseIp(cidrParts[0]);
         int mask = 0xffffffff << (32 - netBits);
         return (ip & mask) == net;
-    }
-
-    private String readClient() throws InterruptedException, IOException {
-        String line;
-        while ((line = inClient.readLine()) == null) {
-            Thread.sleep(50L);
-        }
-        logger.trace("From Client: " + line);
-        return line;
     }
 
     private void sendClient(int code, String text) {
