@@ -5,10 +5,7 @@
 package com.bocnb.ftpg;
 
 import java.io.*;
-import java.net.BindException;
-import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.net.*;
 import java.util.List;
 import java.util.Random;
 
@@ -61,8 +58,7 @@ public class FTPGSession implements Runnable {
 
             try {
                 welcome();
-                login();
-                running = true;
+                running = login();
                 while (running) {
                     String s = inClient.readLine();
                     if (s == null) {
@@ -75,17 +71,16 @@ public class FTPGSession implements Runnable {
             } catch (RuntimeException rte) {
                 // TODO: Treat the following error with some logic. There could be many reasons.
                 logger.error("Fatal error in FTPG session, terminating this client", rte);
-                terminate();
             } catch (Exception e) {
                 // Usually time out exception
                 logger.debug("Session terminated.", e);
+            } finally {
                 terminate();
             }
         } catch (IOException ioe) {
             logger.error("", ioe);
             terminate();
         }
-
     }
 
     private void readCommand(String fromClient) throws IOException {
@@ -287,11 +282,15 @@ public class FTPGSession implements Runnable {
                 "220 :-)");
     }
 
-    private void login() throws IOException, InterruptedException {
+    private boolean login() throws IOException, InterruptedException {
         String line = inClient.readLine();
+
         while (!line.startsWith("USER ") || line.length() < 6) {
             sendClient(530, "Please login with USER and PASS first");
             line = inClient.readLine();
+            if (line == null) {
+                return false;
+            }
         }
 
         String clientUsername = line.substring(5);
@@ -302,6 +301,9 @@ public class FTPGSession implements Runnable {
         while (!line.startsWith("PASS ") || line.length() < 6) {
             sendClient(331, "Password required for " + clientUsername);
             line = inClient.readLine();
+            if (line == null) {
+                return false;
+            }
         }
 
         // We got credentials
@@ -343,6 +345,7 @@ public class FTPGSession implements Runnable {
         }
         sendServer("PASS " + clientPassword);
         readServer(true);
+
         if (!userLoggedIn) {
             server.loginComplete(new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(),
                     target.getHost() + ":" + target.getPort(), false));
@@ -352,6 +355,7 @@ public class FTPGSession implements Runnable {
         loginEvent = new FTPGLoginEvent(clientIP, clientUsername, target.getUsername(),
                 target.getHost() + ":" + target.getPort(), true);
         server.loginComplete(loginEvent);
+        return true;
     }
 
     private FTPGTarget lookup(String clientUsername, String clientIP) throws IOException {
@@ -416,8 +420,7 @@ public class FTPGSession implements Runnable {
         // 221 Goodbye, 421 Service not available, 530 Login failed
         else if (response == 221 || response == 421 || response == 530) {
             userLoggedIn = false;
-
-            terminate();
+            running = false;
         }
 
         if (forwardToClient || response == 110) {   // 110 Restart marker reply
