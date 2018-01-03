@@ -120,7 +120,7 @@ public class FTPGSession implements Runnable {
             if (clientDataServerSocket != null) {
                 int port = clientDataServerSocket.getLocalPort();
                 if (fromClient.startsWith("EPSV")) {
-                    sendClient(229, "Entering Extended Passive Mode (|||" + port + "|");
+                    sendClient(229, "Entering Extended Passive Mode (|||" + port + "|)");
                 } else {
                     sendClient(227, "Entering Passive Mode(" + sLocalClientIP + "," +
                             (port / 256) + "," + (port % 256) + ")");
